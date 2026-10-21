@@ -700,6 +700,126 @@ def v12_champions(summary):
         "Total":summary.loc[summary.Total_MAE.idxmin(),"candidate"]
     }
 
+# ---------- v1.3 Game Engine 1.0 ----------
+# Production policy from v1.2:
+# - win probability: EPA Core Ridge, with baseline shown as shadow benchmark
+# - margin: protected Baseline Ridge; Efficiency Boost remains shadow challenger
+# - total: Pass Ridge (cleared paired-bootstrap improvement)
+
+def fit_game_engine_v10(feature_frame, target_row):
+    """Fit specialized production components using only completed games before target kickoff."""
+    cutoff=target_row["gameday"]
+    tr=feature_frame[
+        (feature_frame.gameday<cutoff)&
+        feature_frame.target_margin.notna()&
+        feature_frame.target_total.notna()&
+        (feature_frame.home_games_prior>=2)&
+        (feature_frame.away_games_prior>=2)
+    ].copy()
+    if len(tr)<300:
+        return None
+
+    # Production components
+    prob=_linear_classifier()
+    margin=pipe(25)
+    total=pipe(30)
+
+    prob.fit(tr[EPA_CORE_FEATURES],(tr.target_margin>0).astype(int))
+    margin.fit(tr[FEATURES],tr.target_margin)
+    total.fit(tr[PASS_FEATURES],tr.target_total)
+
+    # Shadow models for monitoring, not silent production replacement.
+    shadow_prob=_linear_classifier()
+    shadow_margin=nonlinear_regressor()
+    shadow_prob.fit(tr[FEATURES],(tr.target_margin>0).astype(int))
+    shadow_margin.fit(tr[CHALLENGER_FEATURES],tr.target_margin)
+
+    one=target_row.to_frame().T
+    return {
+        "home_win_prob":float(prob.predict_proba(one[EPA_CORE_FEATURES])[:,1][0]),
+        "margin":float(margin.predict(one[FEATURES])[0]),
+        "total":float(total.predict(one[PASS_FEATURES])[0]),
+        "shadow_home_win_prob":float(shadow_prob.predict_proba(one[FEATURES])[:,1][0]),
+        "shadow_margin":float(shadow_margin.predict(one[CHALLENGER_FEATURES])[0]),
+        "training_games":int(len(tr))
+    }
+
+def game_engine_board(games, season, week):
+    """Leakage-safe production board for a selected week."""
+    f=efficiency_pregame_features(games)
+    slate=f[(f.season==season)&(f.week==week)].sort_values(["gameday","gametime"],na_position="last")
+    rows=[]
+    for _,r in slate.iterrows():
+        pred=fit_game_engine_v10(f,r)
+        if pred is None: continue
+        margin=pred["margin"]; total=pred["total"]
+        hp=(total+margin)/2; ap=(total-margin)/2
+        rows.append({
+            "game_id":r.get("game_id"),"gameday":r.get("gameday"),
+            "away_team":r.away_team,"home_team":r.home_team,
+            "away_score_proj":ap,"home_score_proj":hp,
+            **pred,
+            "market_spread":r.get("spread_line",np.nan),
+            "market_total":r.get("total_line",np.nan)
+        })
+    return pd.DataFrame(rows)
+
+def v13_engine_backtest(games, first_test_season=2022):
+    """Validate the exact specialized production architecture against v0.9."""
+    f=efficiency_pregame_features(games)
+    done=f.dropna(subset=["target_margin","target_total"]).sort_values(["gameday","gametime"],na_position="last")
+    test=done[(done.season>=first_test_season)&(done.home_games_prior>=2)&(done.away_games_prior>=2)]
+    rows=[]
+    for (season,week),te in test.groupby(["season","week"],sort=True):
+        cutoff=te.gameday.min()
+        tr=done[(done.gameday<cutoff)&(done.home_games_prior>=2)&(done.away_games_prior>=2)]
+        if len(tr)<300: continue
+
+        # Baseline
+        bp=_linear_classifier(); bm=pipe(25); bt=pipe(30)
+        bp.fit(tr[FEATURES],(tr.target_margin>0).astype(int))
+        bm.fit(tr[FEATURES],tr.target_margin); bt.fit(tr[FEATURES],tr.target_total)
+
+        # Specialized engine
+        ep=_linear_classifier(); em=pipe(25); et=pipe(30)
+        ep.fit(tr[EPA_CORE_FEATURES],(tr.target_margin>0).astype(int))
+        em.fit(tr[FEATURES],tr.target_margin)
+        et.fit(tr[PASS_FEATURES],tr.target_total)
+
+        actual=(te.target_margin>0).astype(float).to_numpy()
+        models=[
+            ("v0.9 baseline",
+             bp.predict_proba(te[FEATURES])[:,1],bm.predict(te[FEATURES]),bt.predict(te[FEATURES])),
+            ("Game Engine 1.0",
+             ep.predict_proba(te[EPA_CORE_FEATURES])[:,1],em.predict(te[FEATURES]),et.predict(te[PASS_FEATURES]))
+        ]
+        for name,wp,pm,pt in models:
+            for i,(_,r) in enumerate(te.iterrows()):
+                rows.append({
+                    "model":name,"season":int(season),"week":int(week),
+                    "actual_win":actual[i],"win_prob":float(wp[i]),
+                    "winner_correct":bool((wp[i]>=.5)==bool(actual[i])),
+                    "margin_error":float(abs(pm[i]-r.target_margin)),
+                    "total_error":float(abs(pt[i]-r.target_total))
+                })
+    return pd.DataFrame(rows)
+
+def v13_summary(x):
+    if x.empty:return pd.DataFrame()
+    y=x.copy(); y["brier"]=(y.win_prob-y.actual_win)**2
+    return y.groupby("model").agg(
+        Games=("winner_correct","size"),Winner_Accuracy=("winner_correct","mean"),
+        Brier=("brier","mean"),Margin_MAE=("margin_error","mean"),
+        Total_MAE=("total_error","mean")).reset_index()
+
+def v13_yearly(x):
+    if x.empty:return pd.DataFrame()
+    y=x.copy(); y["brier"]=(y.win_prob-y.actual_win)**2
+    return y.groupby(["season","model"]).agg(
+        Games=("winner_correct","size"),Winner_Accuracy=("winner_correct","mean"),
+        Brier=("brier","mean"),Margin_MAE=("margin_error","mean"),
+        Total_MAE=("total_error","mean")).reset_index()
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -730,7 +850,7 @@ def model(_g): return NFLEdgeModel().fit(_g)
 
 g=games(); m=model(g); f=m.feature_df
 st.title("🏈 NFL EDGE")
-st.markdown('<div class="small">V1.2 • Hybrid Championship • Production candidates</div>',unsafe_allow_html=True)
+st.markdown('<div class="small">V1.3 • Game Engine 1.0 • Specialized production architecture</div>',unsafe_allow_html=True)
 
 page=st.radio("Navigation",["🏈 GAMES","📊 PROPS","🏆 FANTASY","🔬 SIMULATOR","📈 MODEL RECORD"],horizontal=True,label_visibility="collapsed")
 
@@ -1027,7 +1147,48 @@ elif page=="📈 MODEL RECORD":
             st.write(f"Game total → **{winners['Total']}**")
             st.caption("The championship identifies production candidates; it does not silently rewrite the live engine.")
 
-    st.info("v1.2 rule: aggregate improvement is not enough. We inspect year-to-year stability and paired uncertainty before production promotion.")
+    st.divider()
+    st.subheader("⚙️ v1.3 Game Engine 1.0")
+    st.write("Production architecture assembled from the v1.2 evidence.")
+    st.markdown("""
+**Win probability:** EPA Core Ridge  
+**Game margin:** protected Baseline Ridge  
+**Game total:** Pass Ridge  
+**Shadow probability:** v0.9 baseline  
+**Shadow margin:** Efficiency Boost
+""")
+    st.caption("Shadow models are monitored but do not affect the live projection unless they later earn promotion.")
+
+    if st.button("Validate Game Engine 1.0",type="primary"):
+        with st.spinner("Testing the exact production architecture against the protected baseline..."):
+            eng=v13_engine_backtest(g,2022)
+        if eng.empty:
+            st.error("Game Engine validation could not be produced. No live changes were made.")
+        else:
+            es=v13_summary(eng); eshow=es.copy()
+            eshow["Winner Accuracy"]=eshow.Winner_Accuracy.map(lambda x:f"{x:.1%}")
+            st.dataframe(eshow[["model","Games","Winner Accuracy","Brier","Margin_MAE","Total_MAE"]].round(3),
+                         use_container_width=True,hide_index=True)
+
+            st.subheader("Year-by-year engine stability")
+            ey=v13_yearly(eng); eyshow=ey.copy()
+            eyshow["Winner Accuracy"]=eyshow.Winner_Accuracy.map(lambda x:f"{x:.1%}")
+            st.dataframe(eyshow[["season","model","Games","Winner Accuracy","Brier","Margin_MAE","Total_MAE"]].round(3),
+                         use_container_width=True,hide_index=True)
+
+            base=es[es.model=="v0.9 baseline"].iloc[0]
+            new=es[es.model=="Game Engine 1.0"].iloc[0]
+            st.markdown("### Engine delta vs v0.9")
+            st.write(f"Winner accuracy: **{(new.Winner_Accuracy-base.Winner_Accuracy):+.2%}**")
+            st.write(f"Brier: **{(new.Brier-base.Brier):+.4f}**")
+            st.write(f"Margin MAE: **{(new.Margin_MAE-base.Margin_MAE):+.3f}**")
+            st.write(f"Total MAE: **{(new.Total_MAE-base.Total_MAE):+.3f}**")
+            if new.Total_MAE < base.Total_MAE and new.Winner_Accuracy >= base.Winner_Accuracy:
+                st.success("ENGINE GATE: PASS — specialized architecture improves the validated profile without sacrificing straight-up accuracy.")
+            else:
+                st.warning("ENGINE GATE: HOLD — keep researching before treating the specialized architecture as final.")
+
+    st.info("Next research layer: quarterback availability/quality, injuries, offensive line, opponent adjustment, offseason carryover, travel/rest, and weather — each added as a separately validated feature family.")
 
 st.divider()
-st.caption("NFL Edge v1.2 • Probabilistic research software. A projection is not a guarantee, and PASS is a valid model decision.")
+st.caption("NFL Edge v1.3 • Probabilistic research software. A projection is not a guarantee, and PASS is a valid model decision.")
