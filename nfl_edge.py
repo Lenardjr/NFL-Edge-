@@ -580,6 +580,126 @@ def component_winners(score):
         "Total":score.loc[score.Total_MAE.idxmin(),"candidate"]
     }
 
+# ---------- v1.2 Hybrid Championship ----------
+EPA_CORE_FEATURES=FEATURES+[
+    "home_off_epa","away_off_epa","home_def_epa_allowed","away_def_epa_allowed"
+]
+PASS_FEATURES=FEATURES+[
+    "home_off_pass_epa","away_off_pass_epa","home_def_pass_epa_allowed","away_def_pass_epa_allowed",
+    "home_pass_matchup","away_pass_matchup"
+]
+
+def _linear_classifier():
+    return Pipeline([("impute",SimpleImputer(strategy="median")),("scale",StandardScaler()),
+                     ("model",LogisticRegression(C=.45,max_iter=2000))])
+
+def _fit_champions(tr, te):
+    """Finalists earned in v1.1. Returns predictions for each specialized candidate."""
+    specs={
+        "Baseline Ridge":(FEATURES,"linear"),
+        "EPA Core Ridge":(EPA_CORE_FEATURES,"linear"),
+        "Pass Ridge":(PASS_FEATURES,"linear"),
+        "Efficiency Boost":(CHALLENGER_FEATURES,"boost")
+    }
+    out={}
+    for name,(features,kind) in specs.items():
+        if kind=="linear":
+            mm,tm,wm=pipe(25),pipe(30),_linear_classifier()
+        else:
+            mm,tm,wm=nonlinear_regressor(),nonlinear_regressor(),nonlinear_classifier()
+        mm.fit(tr[features],tr.target_margin)
+        tm.fit(tr[features],tr.target_total)
+        wm.fit(tr[features],(tr.target_margin>0).astype(int))
+        out[name]={
+            "margin":mm.predict(te[features]),
+            "total":tm.predict(te[features]),
+            "win_prob":wm.predict_proba(te[features])[:,1]
+        }
+    return out
+
+def v12_championship(games,first_test_season=2022):
+    """Head-to-head finalists on identical weekly walk-forward folds."""
+    f=efficiency_pregame_features(games)
+    done=f.dropna(subset=["target_margin","target_total"]).sort_values(["gameday","gametime"],na_position="last")
+    test=done[(done.season>=first_test_season)&(done.home_games_prior>=2)&(done.away_games_prior>=2)]
+    rows=[]
+    for (season,week),te in test.groupby(["season","week"],sort=True):
+        cutoff=te.gameday.min()
+        tr=done[(done.gameday<cutoff)&(done.home_games_prior>=2)&(done.away_games_prior>=2)]
+        if len(tr)<300:continue
+        preds=_fit_champions(tr,te)
+        actual=(te.target_margin>0).astype(float).to_numpy()
+        for name,pred in preds.items():
+            for i,(_,r) in enumerate(te.iterrows()):
+                rows.append({
+                    "candidate":name,"season":int(season),"week":int(week),
+                    "actual_win":actual[i],"win_prob":float(pred["win_prob"][i]),
+                    "winner_correct":bool((pred["win_prob"][i]>=.5)==bool(actual[i])),
+                    "margin_error":float(abs(pred["margin"][i]-r.target_margin)),
+                    "total_error":float(abs(pred["total"][i]-r.target_total))
+                })
+    return pd.DataFrame(rows)
+
+def v12_summary(ch):
+    if ch.empty:return pd.DataFrame()
+    x=ch.copy()
+    x["brier"]=(x.win_prob-x.actual_win)**2
+    return x.groupby("candidate").agg(
+        Games=("winner_correct","size"),Winner_Accuracy=("winner_correct","mean"),
+        Brier=("brier","mean"),Margin_MAE=("margin_error","mean"),
+        Total_MAE=("total_error","mean")).reset_index()
+
+def v12_yearly(ch):
+    if ch.empty:return pd.DataFrame()
+    x=ch.copy(); x["brier"]=(x.win_prob-x.actual_win)**2
+    return x.groupby(["season","candidate"]).agg(
+        Games=("winner_correct","size"),Winner_Accuracy=("winner_correct","mean"),
+        Brier=("brier","mean"),Margin_MAE=("margin_error","mean"),
+        Total_MAE=("total_error","mean")).reset_index()
+
+def paired_bootstrap(ch, challenger, baseline="Baseline Ridge", metric="brier", n_boot=4000, seed=27):
+    """Paired game bootstrap: probability challenger improves over baseline."""
+    b=ch[ch.candidate==baseline].reset_index(drop=True).copy()
+    c=ch[ch.candidate==challenger].reset_index(drop=True).copy()
+    if len(b)!=len(c) or not len(b):return np.nan, np.nan, np.nan
+    if metric=="brier":
+        bv=(b.win_prob-b.actual_win).to_numpy()**2
+        cv=(c.win_prob-c.actual_win).to_numpy()**2
+    elif metric=="margin":
+        bv=b.margin_error.to_numpy(); cv=c.margin_error.to_numpy()
+    elif metric=="total":
+        bv=b.total_error.to_numpy(); cv=c.total_error.to_numpy()
+    elif metric=="accuracy":
+        # Higher is better, flip sign so negative delta still means improvement.
+        bv=-b.winner_correct.astype(float).to_numpy()
+        cv=-c.winner_correct.astype(float).to_numpy()
+    else: raise ValueError(metric)
+    d=cv-bv
+    rng=np.random.default_rng(seed); n=len(d)
+    means=np.empty(n_boot)
+    for j in range(n_boot):
+        means[j]=np.mean(d[rng.integers(0,n,n)])
+    return float(np.mean(d)), float(np.quantile(means,.025)), float(np.quantile(means,.975))
+
+def v12_bootstrap_table(ch):
+    rows=[]
+    for candidate in ["EPA Core Ridge","Pass Ridge","Efficiency Boost"]:
+        for label,key in [("Winner accuracy","accuracy"),("Brier","brier"),("Margin MAE","margin"),("Total MAE","total")]:
+            delta,lo,hi=paired_bootstrap(ch,candidate,metric=key)
+            rows.append({"Candidate":candidate,"Metric":label,"Delta vs baseline":delta,
+                         "95% CI low":lo,"95% CI high":hi,
+                         "Clear improvement":bool(pd.notna(hi) and hi<0)})
+    return pd.DataFrame(rows)
+
+def v12_champions(summary):
+    if summary.empty:return {}
+    return {
+        "Probability":summary.loc[summary.Brier.idxmin(),"candidate"],
+        "Straight-up":summary.loc[summary.Winner_Accuracy.idxmax(),"candidate"],
+        "Margin":summary.loc[summary.Margin_MAE.idxmin(),"candidate"],
+        "Total":summary.loc[summary.Total_MAE.idxmin(),"candidate"]
+    }
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -610,7 +730,7 @@ def model(_g): return NFLEdgeModel().fit(_g)
 
 g=games(); m=model(g); f=m.feature_df
 st.title("🏈 NFL EDGE")
-st.markdown('<div class="small">V1.1 • Model tournament + feature ablation • Baseline protected</div>',unsafe_allow_html=True)
+st.markdown('<div class="small">V1.2 • Hybrid Championship • Production candidates</div>',unsafe_allow_html=True)
 
 page=st.radio("Navigation",["🏈 GAMES","📊 PROPS","🏆 FANTASY","🔬 SIMULATOR","📈 MODEL RECORD"],horizontal=True,label_visibility="collapsed")
 
@@ -866,7 +986,48 @@ elif page=="📈 MODEL RECORD":
                          use_container_width=True,hide_index=True)
             st.caption("Negative deltas are improvements versus v0.9. This table determines which feature families advance to the next hybrid model.")
 
-    st.info("v1.1 rule: choose the best validated model separately for win probability, margin, and total. No forced one-model-fits-all architecture.")
+    st.divider()
+    st.subheader("🏆 v1.2 Hybrid Championship")
+    st.write("Only finalists that earned advancement in v1.1 compete here: baseline, EPA Core, Pass Efficiency, and nonlinear Efficiency Boost.")
+    st.caption("Every finalist sees the same historical games and the same weekly walk-forward cutoffs.")
+    if st.button("Run v1.2 Hybrid Championship",type="primary"):
+        with st.spinner("Running finalist models and paired bootstrap validation..."):
+            champ=v12_championship(g,2022)
+        if champ.empty:
+            st.error("Championship data could not be produced. No production model changes were made.")
+        else:
+            sc=v12_summary(champ)
+            show=sc.copy()
+            show["Winner Accuracy"]=show.Winner_Accuracy.map(lambda x:f"{x:.1%}")
+            st.dataframe(show[["candidate","Games","Winner Accuracy","Brier","Margin_MAE","Total_MAE"]].round(3),
+                         use_container_width=True,hide_index=True)
+
+            winners=v12_champions(sc)
+            st.subheader("Component Champions")
+            for metric,name in winners.items(): st.write(f"**{metric}:** {name}")
+
+            st.subheader("Year-by-year consistency")
+            yr=v12_yearly(champ); yrshow=yr.copy()
+            yrshow["Winner Accuracy"]=yrshow.Winner_Accuracy.map(lambda x:f"{x:.1%}")
+            st.dataframe(yrshow[["season","candidate","Games","Winner Accuracy","Brier","Margin_MAE","Total_MAE"]].round(3),
+                         use_container_width=True,hide_index=True)
+
+            st.subheader("Paired bootstrap vs v0.9 baseline")
+            boot=v12_bootstrap_table(champ)
+            st.dataframe(boot.round(4),use_container_width=True,hide_index=True)
+            clear=boot[boot["Clear improvement"]]
+            if len(clear):
+                st.success(f"{len(clear)} candidate/metric improvements have a 95% bootstrap interval entirely better than baseline.")
+            else:
+                st.warning("No finalist improvement clears the 95% paired-bootstrap bar yet. Treat aggregate gains as promising, not proven.")
+
+            st.subheader("Recommended production architecture")
+            st.write(f"Win probability → **{winners['Probability']}**")
+            st.write(f"Game margin → **{winners['Margin']}**")
+            st.write(f"Game total → **{winners['Total']}**")
+            st.caption("The championship identifies production candidates; it does not silently rewrite the live engine.")
+
+    st.info("v1.2 rule: aggregate improvement is not enough. We inspect year-to-year stability and paired uncertainty before production promotion.")
 
 st.divider()
-st.caption("NFL Edge v1.1 • Probabilistic research software. A projection is not a guarantee, and PASS is a valid model decision.")
+st.caption("NFL Edge v1.2 • Probabilistic research software. A projection is not a guarantee, and PASS is a valid model decision.")
