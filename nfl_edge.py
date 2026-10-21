@@ -337,6 +337,77 @@ def edge_label(prob, pass_floor=.55, strong=.60):
     return "PASS"
 
 
+
+# ---------- v2.1 Player Projection Championship ----------
+PLAYER_CHAMP_STATS = {
+    "Passing Yards": ("proj_Passing Yards", "actual_Passing Yards", {"QB"}),
+    "Rushing Yards": ("proj_Rushing Yards", "actual_Rushing Yards", {"QB","RB","FB"}),
+    "Receiving Yards": ("proj_Receiving Yards", "actual_Receiving Yards", {"WR","TE","RB","FB"}),
+    "Receptions": ("proj_Receptions", "actual_Receptions", {"WR","TE","RB","FB"}),
+    "Targets": ("proj_Targets", "actual_Targets", {"WR","TE","RB","FB"}),
+    "Carries": ("proj_Carries", "actual_Carries", {"QB","RB","FB"}),
+}
+
+def v21_player_championship(stats, start_season=2022, end_season=2026, start_week=4):
+    """Chronological, prior-week-only audit of the frozen player opportunity engine.
+    No current-week production is used in its own projection.
+    """
+    frames=[]
+    for season in range(start_season,end_season+1):
+        try:
+            bt=backtest_players(stats,season,"PPR",start_week=start_week)
+        except Exception:
+            bt=pd.DataFrame()
+        if not bt.empty: frames.append(bt)
+    if not frames: return pd.DataFrame(),pd.DataFrame(),pd.DataFrame()
+    x=pd.concat(frames,ignore_index=True)
+    rows=[]
+    for stat,(pc,ac,positions) in PLAYER_CHAMP_STATS.items():
+        g=x[x.position.astype(str).isin(positions)].copy()
+        if g.empty: continue
+        pred=pd.to_numeric(g[pc],errors="coerce"); actual=pd.to_numeric(g[ac],errors="coerce")
+        ok=pred.notna()&actual.notna(); g=g[ok].copy(); pred=pred[ok]; actual=actual[ok]
+        if len(g)<25: continue
+        err=(pred-actual).abs(); rmse=float(np.sqrt(np.mean((pred-actual)**2)))
+        bias=float(np.mean(pred-actual)); mae=float(err.mean())
+        denom=float(np.mean(np.abs(actual)))
+        nmae=mae/denom if denom>0 else np.nan
+        corr=float(np.corrcoef(pred,actual)[0,1]) if pred.std()>0 and actual.std()>0 else np.nan
+        # Reliability tiers are deliberately conservative and descriptive, not betting-edge labels.
+        if len(g)>=250 and corr>=.55 and nmae<=.55: tier="STRONG"
+        elif len(g)>=150 and corr>=.40 and nmae<=.75: tier="USABLE"
+        else: tier="RESEARCH"
+        rows.append({"Market":stat,"Player-games":len(g),"MAE":mae,"RMSE":rmse,"Bias":bias,"Correlation":corr,"Normalized MAE":nmae,"Research tier":tier})
+    market=pd.DataFrame(rows).sort_values(["Research tier","Normalized MAE"],ascending=[True,True]) if rows else pd.DataFrame()
+    pos=x.groupby("position").agg(Player_games=("player","size"),Fantasy_MAE=("ae_fantasy","mean")).reset_index().sort_values("Player_games",ascending=False)
+    yr=x.groupby("season").agg(Player_games=("player","size"),Fantasy_MAE=("ae_fantasy","mean")).reset_index()
+    return market,pos,yr
+
+def v21_td_audit(stats,start_season=2022,end_season=2026,start_week=4):
+    """TD projections are audited separately because rare-event MAE can look deceptively good."""
+    rows=[]
+    for season in range(start_season,end_season+1):
+        d=stats[stats.season==season].copy()
+        for week in sorted(d.week.dropna().astype(int).unique()):
+            if week<start_week: continue
+            actual=d[d.week==week]
+            for team in actual.recent_team.dropna().unique():
+                u=player_usage_before_week(stats,season,week,team)
+                if u.empty: continue
+                pr=project_team_players(u)
+                for _,r in pr.iterrows():
+                    a=actual[actual.player_id==r.player_id] if "player_id" in actual and "player_id" in r else pd.DataFrame()
+                    if a.empty: continue
+                    a=a.iloc[0]
+                    for label,pc,ac,poss in [("Passing TDs","proj_passing_tds","passing_tds",{"QB"}),("Rushing TDs","proj_rushing_tds","rushing_tds",{"QB","RB","FB"}),("Receiving TDs","proj_receiving_tds","receiving_tds",{"WR","TE","RB","FB"})]:
+                        if str(r.position) not in poss: continue
+                        pv=float(r.get(pc,0) or 0); av=float(a.get(ac,0) or 0)
+                        rows.append({"Market":label,"pred":pv,"actual":av})
+    if not rows:return pd.DataFrame()
+    z=pd.DataFrame(rows)
+    return z.groupby("Market").apply(lambda q:pd.Series({"Player-games":len(q),"MAE":float(np.mean(np.abs(q.pred-q.actual))),"Bias":float(np.mean(q.pred-q.actual)),"Actual TD rate":float(q.actual.mean())}),include_groups=False).reset_index()
+
+
 # ---------- v1.0 efficiency challenger ----------
 PBP_URL="https://github.com/nflverse/nflverse-data/releases/download/pbp/play_by_play_{season}.parquet"
 EFF_FEATURES=[
@@ -1491,7 +1562,7 @@ def model(_g): return NFLEdgeModel().fit(_g)
 
 g=games(); m=model(g); f=m.feature_df
 st.title("🏈 NFL EDGE")
-st.markdown('<div class="small">V1.5 • Football Intelligence Lab • Game Engine 1.0 protected</div>',unsafe_allow_html=True)
+st.markdown('<div class="small">v2.1 • Player Projection Championship • Game Engine 1.0 frozen</div>',unsafe_allow_html=True)
 
 page=st.radio("Navigation",["🏈 GAMES","📊 PROPS","🏆 FANTASY","🔬 SIMULATOR","📈 MODEL RECORD"],horizontal=True,label_visibility="collapsed")
 
@@ -2063,5 +2134,35 @@ elif page=="📈 MODEL RECORD":
     st.info("After v2.0: decide whether to freeze Game Engine 1.0 for the live-product phase, while keeping QB Availability as a shadow candidate. Rest/travel and weather can remain queued rather than blocking product development.")
 
 
+    st.divider()
+    st.subheader("🎯 v2.1 — Player Projection Championship")
+    st.write("Audits the player engine market-by-market before NFL Edge is allowed to treat any prop category as a betting edge. Projections use completed prior weeks only; current-week production never enters its own projection.")
+    st.caption("This is projection validation, not sportsbook profitability validation. STRONG/USABLE means the stat projection has predictive structure; it does not yet mean a sportsbook line is beatable.")
+    if st.button("Run v2.1 Player Projection Championship",type="primary"):
+        with st.spinner("Backtesting QB/RB/WR/TE player markets chronologically..."):
+            ps=players(); mk,pos,yr=v21_player_championship(ps,2022,2026,4); td=v21_td_audit(ps,2022,2026,4)
+        if mk.empty:
+            st.error("Player championship could not be produced from the current nflverse player feed. No production labels were changed.")
+        else:
+            show=mk.copy(); show["Correlation"]=show["Correlation"].map(lambda q:f"{q:.3f}" if pd.notna(q) else "—"); show["Normalized MAE"]=show["Normalized MAE"].map(lambda q:f"{q:.1%}" if pd.notna(q) else "—")
+            st.markdown("### Market reliability board")
+            st.dataframe(show.round(2),use_container_width=True,hide_index=True)
+            st.markdown("### Fantasy projection error by position")
+            st.dataframe(pos.round(2),use_container_width=True,hide_index=True)
+            st.markdown("### Year-by-year player-engine stability")
+            st.dataframe(yr.round(2),use_container_width=True,hide_index=True)
+            st.markdown("### TD rare-event audit")
+            st.caption("Touchdowns are separated because a low MAE on a rare event can be misleading. They remain research-only until probability calibration is validated.")
+            st.dataframe(td.round(3),use_container_width=True,hide_index=True)
+            strong=mk[mk["Research tier"]=="STRONG"]["Market"].tolist(); usable=mk[mk["Research tier"]=="USABLE"]["Market"].tolist()
+            if strong:
+                st.success("PLAYER ENGINE GATE: at least one market shows strong projection structure. Next step is sportsbook-line/price backtesting for: "+", ".join(strong)+".")
+            elif usable:
+                st.info("PLAYER ENGINE GATE: usable projection structure exists, but no market earns STRONG yet. Next step is targeted model upgrades before claiming betting value.")
+            else:
+                st.warning("PLAYER ENGINE GATE: HOLD. The current opportunity model is not strong enough to support prop-edge claims. Upgrade the player engine before odds integration.")
+            st.caption("NFL Edge will not label a prop as +EV until historical lines/odds and forward frozen picks demonstrate value after vig.")
+
+
 st.divider()
-st.caption("NFL Edge v2.0 • 2026 holdout diagnostic • Game Engine 1.0 protected • Probabilistic research software. A projection is not a guarantee, and PASS is a valid model decision.")
+st.caption("NFL Edge v2.1 • Player Projection Championship • Game Engine 1.0 frozen • No prop is called +EV until price-aware validation proves it.")
