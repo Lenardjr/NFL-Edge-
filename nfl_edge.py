@@ -1,5 +1,5 @@
 from __future__ import annotations
-# NFL Edge v1.5 — standalone Streamlit app; Game Engine 1.0 protected
+# NFL Edge v1.6 — standalone Streamlit app; Game Engine 1.0 protected
 # Data source attribution: nflverse (CC-BY 4.0 where applicable).
 
 import math
@@ -1050,6 +1050,105 @@ def v15_qb_availability_bootstrap(x,n_boot=4000,seed=51):
         {"Metric":"Winner accuracy","Delta":float(da.mean()),"95% CI low":float(np.quantile(aa,.025)),"95% CI high":float(np.quantile(aa,.975)),"Clear improvement":bool(np.quantile(aa,.025)>0)},
         {"Metric":"Brier","Delta":float(db.mean()),"95% CI low":float(np.quantile(bb,.025)),"95% CI high":float(np.quantile(bb,.975)),"Clear improvement":bool(np.quantile(bb,.975)<0)}])
 
+
+# ---------- v1.6 Football Intelligence: Offensive Line Availability ----------
+# Uses only official weekly injury/practice reports. It measures OL availability burden,
+# not postgame participation, and is validated as a separate challenger family.
+OL_POSITIONS={"C","G","T","OT","OG","OL","LT","RT","LG","RG"}
+OL_AVAIL_FEATURES=[
+    "home_ol_out","away_ol_out","ol_out_diff",
+    "home_ol_questionable","away_ol_questionable","ol_questionable_diff",
+    "home_ol_dnp","away_ol_dnp","ol_dnp_diff",
+    "home_ol_limited","away_ol_limited","ol_limited_diff",
+    "home_ol_burden","away_ol_burden","ol_burden_diff"
+]
+OL_AVAIL_PROB_FEATURES=EPA_CORE_FEATURES+OL_AVAIL_FEATURES
+
+@lru_cache(maxsize=1)
+def load_ol_availability_history(start_season=2022,end_season=2024):
+    rows=[]
+    for season in range(start_season,end_season+1):
+        try: inj=pd.read_csv(INJURY_URL_TEMPLATE.format(season=season))
+        except Exception: continue
+        if inj.empty or not {"season","week"}.issubset(inj.columns): continue
+        team_col="team" if "team" in inj.columns else "club_code" if "club_code" in inj.columns else None
+        if team_col is None or "position" not in inj.columns: continue
+        x=inj.copy(); x["position"]=x.position.fillna("").astype(str).str.upper().str.strip()
+        x=x[x.position.isin(OL_POSITIONS)]
+        if x.empty: continue
+        idcol="gsis_id" if "gsis_id" in x.columns else "full_name" if "full_name" in x.columns else None
+        if idcol is None: continue
+        # Keep the latest official weekly report row for each player, matching v1.5's pregame feed rule.
+        keys=["season","week",team_col,idcol]
+        if "date_modified" in x.columns:
+            x["date_modified"]=pd.to_datetime(x.date_modified,errors="coerce",utc=True)
+            x=x.sort_values("date_modified").drop_duplicates(keys,keep="last")
+        else: x=x.drop_duplicates(keys,keep="last")
+        rs=x.get("report_status",pd.Series("",index=x.index)).fillna("").astype(str).str.lower()
+        ps=x.get("practice_status",pd.Series("",index=x.index)).fillna("").astype(str).str.lower()
+        x["ol_out_flag"]=rs.str.contains(r"out|doubtful",regex=True).astype(float)
+        x["ol_questionable_flag"]=rs.str.contains("question",regex=False).astype(float)
+        x["ol_dnp_flag"]=ps.str.contains(r"did not|dnp|not particip",regex=True).astype(float)
+        x["ol_limited_flag"]=ps.str.contains("limit",regex=False).astype(float)
+        g=x.groupby(["season","week",team_col],as_index=False).agg(
+            ol_out=("ol_out_flag","sum"),ol_questionable=("ol_questionable_flag","sum"),
+            ol_dnp=("ol_dnp_flag","sum"),ol_limited=("ol_limited_flag","sum"))
+        g=g.rename(columns={team_col:"team"})
+        # A compact severity index is included alongside raw counts; the model decides whether it helps.
+        g["ol_burden"]=g.ol_out+0.35*g.ol_questionable+0.20*g.ol_dnp+0.10*g.ol_limited
+        rows.append(g)
+    return pd.concat(rows,ignore_index=True) if rows else pd.DataFrame()
+
+def add_ol_availability_features(feature_frame,ol):
+    f=feature_frame.copy(); metrics=["ol_out","ol_questionable","ol_dnp","ol_limited","ol_burden"]
+    if ol is None or ol.empty:
+        for c in OL_AVAIL_FEATURES: f[c]=np.nan
+        return f
+    h=ol.rename(columns={"team":"home_team",**{m:"home_"+m for m in metrics}})
+    a=ol.rename(columns={"team":"away_team",**{m:"away_"+m for m in metrics}})
+    f=f.merge(h,on=["season","week","home_team"],how="left").merge(a,on=["season","week","away_team"],how="left")
+    for m in metrics:
+        f["home_"+m]=f["home_"+m].fillna(0.0); f["away_"+m]=f["away_"+m].fillna(0.0)
+        f[m+"_diff"]=f["home_"+m]-f["away_"+m]
+    return f
+
+def v16_ol_backtest(games,ol,first_test_season=2022,last_test_season=2024):
+    f=add_ol_availability_features(efficiency_pregame_features(games),ol)
+    done=f.dropna(subset=["target_margin","target_total"]).sort_values(["gameday","gametime"],na_position="last")
+    test=done[(done.season>=first_test_season)&(done.season<=last_test_season)&(done.home_games_prior>=2)&(done.away_games_prior>=2)]
+    rows=[]
+    for (season,week),te in test.groupby(["season","week"],sort=True):
+        cutoff=te.gameday.min(); tr=done[(done.gameday<cutoff)&(done.season>=first_test_season)&(done.season<=last_test_season)&(done.home_games_prior>=2)&(done.away_games_prior>=2)]
+        if len(tr)<250: continue
+        actual=(te.target_margin>0).astype(float).to_numpy()
+        for name,features in [("Game Engine 1.0",EPA_CORE_FEATURES),("OL Availability Challenger",OL_AVAIL_PROB_FEATURES)]:
+            wm=_linear_classifier(); wm.fit(tr[features],(tr.target_margin>0).astype(int)); wp=wm.predict_proba(te[features])[:,1]
+            for i,(_,r) in enumerate(te.iterrows()):
+                rows.append({"model":name,"season":int(season),"week":int(week),"actual_win":actual[i],"win_prob":float(wp[i]),"winner_correct":bool((wp[i]>=.5)==bool(actual[i]))})
+    return pd.DataFrame(rows)
+
+def v16_ol_summary(x):
+    if x.empty:return pd.DataFrame()
+    y=x.copy(); y["brier"]=(y.win_prob-y.actual_win)**2
+    return y.groupby("model").agg(Games=("winner_correct","size"),Winner_Accuracy=("winner_correct","mean"),Brier=("brier","mean")).reset_index()
+
+def v16_ol_yearly(x):
+    if x.empty:return pd.DataFrame()
+    y=x.copy(); y["brier"]=(y.win_prob-y.actual_win)**2
+    return y.groupby(["season","model"]).agg(Games=("winner_correct","size"),Winner_Accuracy=("winner_correct","mean"),Brier=("brier","mean")).reset_index()
+
+def v16_ol_bootstrap(x,n_boot=4000,seed=61):
+    if x.empty:return pd.DataFrame()
+    b=x[x.model=="Game Engine 1.0"].reset_index(drop=True); c=x[x.model=="OL Availability Challenger"].reset_index(drop=True); n=min(len(b),len(c))
+    if n==0:return pd.DataFrame()
+    b=b.iloc[:n]; c=c.iloc[:n]
+    da=c.winner_correct.astype(float).to_numpy()-b.winner_correct.astype(float).to_numpy()
+    db=(c.win_prob-c.actual_win).pow(2).to_numpy()-(b.win_prob-b.actual_win).pow(2).to_numpy()
+    rng=np.random.default_rng(seed); idx=rng.integers(0,n,size=(n_boot,n)); aa=da[idx].mean(1); bb=db[idx].mean(1)
+    return pd.DataFrame([
+        {"Metric":"Winner accuracy","Delta":float(da.mean()),"95% CI low":float(np.quantile(aa,.025)),"95% CI high":float(np.quantile(aa,.975)),"Clear improvement":bool(np.quantile(aa,.025)>0)},
+        {"Metric":"Brier","Delta":float(db.mean()),"95% CI low":float(np.quantile(bb,.025)),"95% CI high":float(np.quantile(bb,.975)),"Clear improvement":bool(np.quantile(bb,.975)<0)}])
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -1481,7 +1580,35 @@ elif page=="📈 MODEL RECORD":
                 else: st.info("QB AVAILABILITY GATE: PROMISING — aggregate profile improves, but certainty is not strong enough for automatic production promotion.")
             else:
                 st.warning("QB AVAILABILITY GATE: HOLD — Game Engine 1.0 remains protected.")
-    st.info("v1.5 research rule: availability must be knowable before kickoff. Historical actual starters are never reverse-engineered from postgame stats. Next layers: offensive line → skill-position injuries → opponent adjustment → rest/travel → weather.")
+    st.info("v1.5 research rule: availability must be knowable before kickoff. Historical actual starters are never reverse-engineered from postgame stats.")
+
+    st.divider()
+    st.subheader("🧱 v1.6 Football Intelligence — Offensive Line Availability")
+    st.write("Tests whether official pregame offensive-line injury/practice burden adds independent signal beyond Game Engine 1.0.")
+    st.caption("This challenger uses weekly official injury/practice reports only. It does not infer starters or snaps from postgame participation. Validation stays in 2022–2024 so it is directly comparable with the v1.5 availability era.")
+    if st.button("Run v1.6 Offensive Line Challenge",type="primary"):
+        with st.spinner("Loading official OL injury reports and running paired walk-forward validation..."):
+            ol=load_ol_availability_history(2022,2024); ox=v16_ol_backtest(g,ol,2022,2024)
+        if ol.empty: st.error("Historical OL availability feed could not be loaded. Game Engine 1.0 remains unchanged.")
+        elif ox.empty: st.error("OL validation could not be produced. Game Engine 1.0 remains unchanged.")
+        else:
+            st.caption(f"Official team-week OL availability rows loaded: {len(ol):,}")
+            sm=v16_ol_summary(ox); show=sm.copy(); show["Winner Accuracy"]=show.Winner_Accuracy.map(lambda x:f"{x:.1%}")
+            st.dataframe(show[["model","Games","Winner Accuracy","Brier"]].round(4),use_container_width=True,hide_index=True)
+            st.subheader("Year-by-year OL stability")
+            yy=v16_ol_yearly(ox); ys=yy.copy(); ys["Winner Accuracy"]=ys.Winner_Accuracy.map(lambda x:f"{x:.1%}")
+            st.dataframe(ys[["season","model","Games","Winner Accuracy","Brier"]].round(4),use_container_width=True,hide_index=True)
+            st.subheader("Paired bootstrap vs Game Engine 1.0")
+            bt=v16_ol_bootstrap(ox); st.dataframe(bt.round(4),use_container_width=True,hide_index=True)
+            base=sm[sm.model=="Game Engine 1.0"].iloc[0]; chal=sm[sm.model=="OL Availability Challenger"].iloc[0]
+            st.markdown("### Offensive-line layer delta")
+            st.write(f"Winner accuracy: **{(chal.Winner_Accuracy-base.Winner_Accuracy):+.2%}**"); st.write(f"Brier: **{(chal.Brier-base.Brier):+.4f}**")
+            clear=bt[bt["Clear improvement"]]
+            if chal.Brier < base.Brier and chal.Winner_Accuracy >= base.Winner_Accuracy:
+                if len(clear): st.success("OL AVAILABILITY GATE: STRONG PASS — the pregame OL layer improves the profile and clears a paired 95% bootstrap bar.")
+                else: st.info("OL AVAILABILITY GATE: PROMISING — aggregate profile improves, but certainty is not strong enough for automatic production promotion.")
+            else: st.warning("OL AVAILABILITY GATE: HOLD — Game Engine 1.0 remains protected.")
+    st.info("Research queue after v1.6: skill-position injuries → opponent adjustment → rest/travel → weather. QB Availability remains a promising shadow candidate, not a production feature.")
 
 st.divider()
-st.caption("NFL Edge v1.5 • Probabilistic research software. A projection is not a guarantee, and PASS is a valid model decision.")
+st.caption("NFL Edge v1.6 • Probabilistic research software. A projection is not a guarantee, and PASS is a valid model decision.")
