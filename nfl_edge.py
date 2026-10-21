@@ -3,6 +3,7 @@ from __future__ import annotations
 # Data source attribution: nflverse (CC-BY 4.0 where applicable).
 
 import math
+from functools import lru_cache
 import numpy as np
 import pandas as pd
 from sklearn.impute import SimpleImputer
