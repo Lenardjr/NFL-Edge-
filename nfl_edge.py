@@ -6,14 +6,14 @@ import math
 import numpy as np
 import pandas as pd
 from sklearn.impute import SimpleImputer
-from sklearn.linear_model import Ridge
+from sklearn.linear_model import Ridge, LogisticRegression
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 TEAM_ALIASES={"LA":"LAR","STL":"LAR","SD":"LAC","OAK":"LV"}
 FEATURES=["elo_diff","pf_matchup","form_diff","winform_diff",
           "home_pf5","away_pf5","home_pa5","away_pa5",
-          "home_games_prior","away_games_prior"]
+          "home_games_prior","away_games_prior","rest_diff","home_rest","away_rest"]
 
 def load_games(url):
     df=pd.read_csv(url)
@@ -25,12 +25,23 @@ def load_games(url):
     return df.sort_values(["gameday","gametime"],na_position="last").reset_index(drop=True)
 
 def pregame_features(df):
-    rows=[]; state={}
+    rows=[]; state={}; last_season=None
     def team(t):
-        return state.setdefault(t,{"games":0,"pf":[],"pa":[],"margin":[],"wins":[],"elo":1500.})
+        return state.setdefault(t,{"games":0,"pf":[],"pa":[],"margin":[],"wins":[],"elo":1500.,"last_date":None})
     def avg(v,n,d): return float(np.mean(v[-n:])) if v else d
     for _,g in df.iterrows():
+        season=int(g.season) if pd.notna(g.get("season",np.nan)) else None
+        if last_season is not None and season is not None and season!=last_season:
+            for s in state.values():
+                s["elo"]=1500.+0.67*(s["elo"]-1500.)
+                s["games"]=0; s["pf"]=[]; s["pa"]=[]; s["margin"]=[]; s["wins"]=[]; s["last_date"]=None
+        last_season=season if season is not None else last_season
         h,a=team(g.home_team),team(g.away_team)
+        gd=pd.to_datetime(g.get("gameday"),errors="coerce")
+        def rest_days(s):
+            if s["last_date"] is None or pd.isna(gd): return 7.0
+            return float(np.clip((gd-s["last_date"]).days,3,21))
+        hr,ar=rest_days(h),rest_days(a)
         r=g.to_dict()
         r.update({
             "home_elo":h["elo"],"away_elo":a["elo"],"elo_diff":h["elo"]-a["elo"],
@@ -38,7 +49,8 @@ def pregame_features(df):
             "home_pa5":avg(h["pa"],5,22),"away_pa5":avg(a["pa"],5,22),
             "home_margin5":avg(h["margin"],5,0),"away_margin5":avg(a["margin"],5,0),
             "home_win5":avg(h["wins"],5,.5),"away_win5":avg(a["wins"],5,.5),
-            "home_games_prior":h["games"],"away_games_prior":a["games"]})
+            "home_games_prior":h["games"],"away_games_prior":a["games"],
+            "home_rest":hr,"away_rest":ar,"rest_diff":hr-ar})
         rows.append(r)
         if pd.notna(g.home_score) and pd.notna(g.away_score):
             hs,aw=float(g.home_score),float(g.away_score); margin=hs-aw
@@ -48,6 +60,7 @@ def pregame_features(df):
             h["elo"]+=delta; a["elo"]-=delta
             for s,pf,pa,m,w in [(h,hs,aw,margin,actual),(a,aw,hs,-margin,1-actual)]:
                 s["games"]+=1; s["pf"].append(pf); s["pa"].append(pa); s["margin"].append(m); s["wins"].append(w)
+                s["last_date"]=gd if pd.notna(gd) else s["last_date"]
     out=pd.DataFrame(rows)
     out["target_margin"]=out.home_score-out.away_score
     out["target_total"]=out.home_score+out.away_score
@@ -63,59 +76,84 @@ def pipe(alpha):
 class NFLEdgeModel:
     def __init__(self):
         self.margin=pipe(25); self.total=pipe(30)
+        self.win_model=Pipeline([("impute",SimpleImputer(strategy="median")),
+                                 ("scale",StandardScaler()),
+                                 ("model",LogisticRegression(C=.45,max_iter=2000))])
     def fit(self,games):
-        f=pregame_features(games); t=f.dropna(subset=["target_margin","target_total"])
+        f=pregame_features(games); t=f.dropna(subset=["target_margin","target_total"]).copy()
         mature=t[(t.home_games_prior>=2)&(t.away_games_prior>=2)]
         if len(mature)>100: t=mature
         self.margin.fit(t[FEATURES],t.target_margin); self.total.fit(t[FEATURES],t.target_total)
-        self.margin_sd=max(8,float(np.std(t.target_margin-self.margin.predict(t[FEATURES]))))
-        self.total_sd=max(8,float(np.std(t.target_total-self.total.predict(t[FEATURES]))))
+        pm=self.margin.predict(t[FEATURES]); pt=self.total.predict(t[FEATURES])
+        self.margin_residuals=np.asarray(t.target_margin-pm,dtype=float)
+        self.total_residuals=np.asarray(t.target_total-pt,dtype=float)
+        self.win_model.fit(t[FEATURES],(t.target_margin>0).astype(int))
         self.feature_df=f; return self
     def predict(self,row,n=50000,seed=42):
         X=pd.DataFrame([{f:row[f] for f in FEATURES}])
-        m=float(self.margin.predict(X)[0]); total=float(self.total.predict(X)[0])
-        hp=max(6,(total+m)/2); ap=max(6,(total-m)/2)
+        margin=float(self.margin.predict(X)[0]); total=float(self.total.predict(X)[0])
         rng=np.random.default_rng(seed)
-        margins=rng.normal(m,self.margin_sd,n); totals=rng.normal(total,self.total_sd,n)
+        margins=margin+rng.choice(self.margin_residuals,size=n,replace=True)
+        totals=total+rng.choice(self.total_residuals,size=n,replace=True)
         hs=np.maximum(0,(totals+margins)/2); aws=np.maximum(0,(totals-margins)/2)
-        out={"home_score":hp,"away_score":ap,"margin":m,"total":total,
-             "home_win_prob":float(np.mean(hs>aws)),"home_scores":hs,"away_scores":aws}
+        sim_home=float(np.mean(hs>aws)); calibrated=float(self.win_model.predict_proba(X)[0,1])
+        home_win=.5*sim_home+.5*calibrated
+        out={"home_score":max(6,(total+margin)/2),"away_score":max(6,(total-margin)/2),
+             "margin":margin,"total":total,"home_win_prob":home_win,
+             "sim_home_win_prob":sim_home,"calibrated_home_win_prob":calibrated,
+             "home_scores":hs,"away_scores":aws}
         spread=row.get("spread_line",np.nan)
-        if pd.notna(spread):
-            # nflverse spread_line is the home-team margin line: +3 means home favored by 3.
-            out["home_cover_prob"]=float(np.mean(margins-float(spread)>0))
+        if pd.notna(spread): out["home_cover_prob"]=float(np.mean(margins-float(spread)>0))
         tl=row.get("total_line",np.nan)
         if pd.notna(tl): out["over_prob"]=float(np.mean(totals>float(tl)))
         if pd.notna(spread) and float(spread)!=0:
             fav_home=float(spread)>0
-            upset=(1-out["home_win_prob"]) if fav_home else out["home_win_prob"]
-            fav_model=m if fav_home else -m
-            disagreement=max(0,abs(float(spread))-fav_model)
+            upset=(1-home_win) if fav_home else home_win
+            fav_model=margin if fav_home else -margin
             out["upset_prob"]=upset
-            out["upset_score"]=min(100,100*upset+2.5*disagreement)
+            out["upset_score"]=min(100,100*upset+2.5*max(0,abs(float(spread))-fav_model))
         return out
 
 def walk_forward_backtest(games,first_test_season=2022):
-    f=pregame_features(games); done=f.dropna(subset=["target_margin","target_total"])
+    f=pregame_features(games); done=f.dropna(subset=["target_margin","target_total"]).copy()
+    done=done.sort_values(["gameday","gametime"],na_position="last")
     outs=[]
-    for season in sorted(done.season.dropna().astype(int).unique()):
-        if season<first_test_season: continue
-        tr=done[done.season<season]
-        te=done[(done.season==season)&(done.home_games_prior>=2)&(done.away_games_prior>=2)]
-        if len(tr)<300 or te.empty: continue
-        mm,tm=pipe(25),pipe(30); mm.fit(tr[FEATURES],tr.target_margin); tm.fit(tr[FEATURES],tr.target_total)
-        pm,pt=mm.predict(te[FEATURES]),tm.predict(te[FEATURES])
-        for (_,r),a,b in zip(te.iterrows(),pm,pt):
-            outs.append({"season":season,"week":r.week,"Game":f"{r.away_team} @ {r.home_team}",
-                         "actual_margin":r.target_margin,"pred_margin":a,
-                         "actual_total":r.target_total,"pred_total":b,
-                         "winner_correct":bool((a>0)==(r.target_margin>0)),
-                         "margin_abs_error":abs(a-r.target_margin),
-                         "total_abs_error":abs(b-r.target_total),
-                         "market_spread":r.get("spread_line",np.nan),
-                         "market_total":r.get("total_line",np.nan),
-                         "model_market_margin_gap":(a-r.get("spread_line",np.nan)) if pd.notna(r.get("spread_line",np.nan)) else np.nan})
+    test=done[(done.season>=first_test_season)&(done.home_games_prior>=2)&(done.away_games_prior>=2)]
+    for (season,week),te in test.groupby(["season","week"],sort=True):
+        cutoff=te.gameday.min()
+        tr=done[done.gameday<cutoff].copy()
+        tr=tr[(tr.home_games_prior>=2)&(tr.away_games_prior>=2)]
+        if len(tr)<300: continue
+        mm,tm=pipe(25),pipe(30)
+        wm=Pipeline([("impute",SimpleImputer(strategy="median")),("scale",StandardScaler()),
+                     ("model",LogisticRegression(C=.45,max_iter=2000))])
+        mm.fit(tr[FEATURES],tr.target_margin); tm.fit(tr[FEATURES],tr.target_total)
+        wm.fit(tr[FEATURES],(tr.target_margin>0).astype(int))
+        pm,pt=mm.predict(te[FEATURES]),tm.predict(te[FEATURES]); wp=wm.predict_proba(te[FEATURES])[:,1]
+        for (_,r),margin,total,p in zip(te.iterrows(),pm,pt,wp):
+            spread=r.get("spread_line",np.nan); gap=np.nan; ats=np.nan; side="NO LINE"
+            if pd.notna(spread):
+                gap=float(margin-spread); cover=float(r.target_margin-spread)
+                side="HOME" if gap>0 else "AWAY" if gap<0 else "PASS"
+                if abs(cover)>1e-9 and side!="PASS":
+                    ats=bool(cover>0) if side=="HOME" else bool(cover<0)
+            actual_home=float(r.target_margin>0)
+            outs.append({"season":int(season),"week":int(week),"gameday":r.gameday,
+                         "Game":f"{r.away_team} @ {r.home_team}",
+                         "actual_margin":r.target_margin,"pred_margin":float(margin),
+                         "actual_total":r.target_total,"pred_total":float(total),
+                         "home_win_prob":float(p),"winner_correct":bool((p>=.5)==bool(actual_home)),
+                         "brier":float((p-actual_home)**2),
+                         "margin_abs_error":abs(margin-r.target_margin),"total_abs_error":abs(total-r.target_total),
+                         "market_spread":spread,"model_market_margin_gap":gap,"model_side":side,"ats_result":ats})
     return pd.DataFrame(outs)
+
+def calibration_table(bt):
+    if bt.empty:return pd.DataFrame()
+    x=bt.copy(); x["actual_home_win"]=(x.actual_margin>0).astype(float)
+    x["bucket"]=pd.cut(x.home_win_prob,bins=[0,.4,.5,.6,1],include_lowest=True)
+    return x.groupby("bucket",observed=True).agg(Games=("Game","size"),
+        Predicted=("home_win_prob","mean"),Actual=("actual_home_win","mean")).reset_index()
 
 
 import numpy as np
@@ -327,7 +365,7 @@ def model(_g): return NFLEdgeModel().fit(_g)
 
 g=games(); m=model(g); f=m.feature_df
 st.title("🏈 NFL EDGE")
-st.markdown('<div class="small">V0.8 • Mobile-first NFL probability lab • Pure model vs market</div>',unsafe_allow_html=True)
+st.markdown('<div class="small">V0.9 • Walk-forward validated NFL probability lab • Pure model vs market</div>',unsafe_allow_html=True)
 
 page=st.radio("Navigation",["🏈 GAMES","📊 PROPS","🏆 FANTASY","🔬 SIMULATOR","📈 MODEL RECORD"],horizontal=True,label_visibility="collapsed")
 
@@ -480,18 +518,41 @@ elif page in ["📊 PROPS","🏆 FANTASY"]:
 
 elif page=="📈 MODEL RECORD":
     st.header("Model Record & Validation")
-    st.write("NFL Edge should earn trust through frozen, out-of-sample results—not by changing predictions after games.")
-    st.caption("Current walk-forward test trains only on seasons before each test season. A permanent live prediction ledger is next.")
-    if st.button("Run game-model walk-forward record",type="primary"):
-        with st.spinner("Backtesting..."): bt=walk_forward_backtest(g,2022)
+    st.write("V0.9 tests each NFL week using only information available before that week's games.")
+    st.caption("This is stricter than the prior season-level backtest and is designed to expose overfitting.")
+    if st.button("Run v0.9 walk-forward validation",type="primary"):
+        with st.spinner("Training and grading each historical week..."): bt=walk_forward_backtest(g,2022)
         if not bt.empty:
-            a,b,c=st.columns(3)
-            a.metric("Winner accuracy",f"{bt.winner_correct.mean():.1%}")
-            b.metric("Margin MAE",f"{bt.margin_abs_error.mean():.2f}")
-            c.metric("Total MAE",f"{bt.total_abs_error.mean():.2f}")
-            st.dataframe(bt.sort_values(["season","week"],ascending=False).head(250),
+            c1,c2,c3,c4=st.columns(4)
+            c1.metric("Winner accuracy",f"{bt.winner_correct.mean():.1%}")
+            c2.metric("Brier score",f"{bt.brier.mean():.3f}")
+            c3.metric("Margin MAE",f"{bt.margin_abs_error.mean():.2f}")
+            c4.metric("Total MAE",f"{bt.total_abs_error.mean():.2f}")
+            st.subheader("Probability calibration")
+            cal=calibration_table(bt)
+            if not cal.empty:
+                cal["Bucket"]=cal.bucket.astype(str)
+                cal["Predicted"]=cal.Predicted.map(lambda x:f"{x:.1%}")
+                cal["Actual"]=cal.Actual.map(lambda x:f"{x:.1%}")
+                st.dataframe(cal[["Bucket","Games","Predicted","Actual"]],use_container_width=True,hide_index=True)
+            st.subheader("Model vs market ATS research")
+            ats=bt.dropna(subset=["model_market_margin_gap","ats_result"])
+            rows=[]
+            for threshold in [0,2,3,4,5,7]:
+                x=ats[ats.model_market_margin_gap.abs()>=threshold]
+                rows.append({"Minimum raw edge":threshold,"Games":len(x),
+                             "ATS win rate":float(x.ats_result.astype(float).mean()) if len(x) else np.nan})
+            et=pd.DataFrame(rows)
+            et["ATS win rate"]=et["ATS win rate"].map(lambda x:f"{x:.1%}" if pd.notna(x) else "—")
+            st.dataframe(et,use_container_width=True,hide_index=True)
+            st.subheader("Year-by-year stability")
+            yr=bt.groupby("season").agg(Games=("Game","size"),Winner=("winner_correct","mean"),
+                Brier=("brier","mean"),Margin_MAE=("margin_abs_error","mean"),Total_MAE=("total_abs_error","mean")).reset_index()
+            yr["Winner Accuracy"]=yr.Winner.map(lambda x:f"{x:.1%}")
+            st.dataframe(yr[["season","Games","Winner Accuracy","Brier","Margin_MAE","Total_MAE"]].round(3),
                          use_container_width=True,hide_index=True)
-    st.info("The permanent prediction ledger is the next deployment-stage feature: predictions will be timestamped and never overwritten after kickoff.")
+            st.caption("Lower Brier is better. ATS thresholds are diagnostics, not betting guarantees.")
+    st.info("Next: freeze live forecasts before kickoff and grade them afterward in a permanent prediction ledger.")
 
 st.divider()
-st.caption("NFL Edge v0.8 • Probabilistic research software. A projection is not a guarantee, and PASS is a valid model decision.")
+st.caption("NFL Edge v0.9 • Probabilistic research software. A projection is not a guarantee, and PASS is a valid model decision.")
