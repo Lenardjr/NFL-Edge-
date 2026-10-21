@@ -1,5 +1,5 @@
 from __future__ import annotations
-# NFL Edge v1.9 — standalone Streamlit app; Game Engine 1.0 protected
+# NFL Edge v2.0 — standalone Streamlit app; Game Engine 1.0 protected
 # Data source attribution: nflverse (CC-BY 4.0 where applicable).
 
 import math
@@ -1321,6 +1321,55 @@ def v19_confidence(x):
         labels=["50–55%","55–60%","60–65%","65–70%","70%+"],include_lowest=True,right=False)
     return y.groupby("Confidence band",observed=True).agg(Games=("Game","size"),Average_Confidence=("confidence","mean"),Winner_Accuracy=("winner_correct","mean")).reset_index()
 
+
+# ---------- v2.0 Holdout Diagnostic ----------
+def v20_holdout_diagnostics(x):
+    """Diagnose where the frozen 2026 holdout engine is strong/weak without refitting it."""
+    if x.empty:
+        return {}
+    y=x.copy()
+    y["phase"]=np.where(y.week<=2,"Cold start (Weeks 1–2)","Informed (Weeks 3–6)")
+    y["pick"]=np.where(y.home_win_prob>=.5,"HOME","AWAY")
+    y["picked_home"]=(y.home_win_prob>=.5)
+    y["projected_margin_strength"]=abs(y.pred_margin)
+    y["market_gap"]=np.where(y.market_spread.notna(),abs(y.pred_margin-y.market_spread),np.nan)
+    y["market_agreement"]=np.where(y.market_spread.notna(),
+        np.where(((y.pred_margin>=0)&(y.market_spread>=0))|((y.pred_margin<0)&(y.market_spread<0)),"Agree","Disagree"),"No line")
+    y["favorite_pick"]=np.where(y.market_spread.notna(),
+        np.where(((y.pick=="HOME")&(y.market_spread>0))|((y.pick=="AWAY")&(y.market_spread<0)),"Market favorite","Market underdog"),"No line")
+    y["margin_error_signed"]=y.pred_margin-y.actual_margin
+    y["total_error_signed"]=y.pred_total-y.actual_total
+
+    def group(col):
+        return y.groupby(col,observed=True).agg(
+            Games=("Game","size"), Winner_Accuracy=("winner_correct","mean"),
+            Brier=("brier","mean"), Margin_MAE=("margin_abs_error","mean"),
+            Total_MAE=("total_abs_error","mean")).reset_index()
+
+    phase=group("phase")
+    pick=group("pick")
+    fav=group("favorite_pick")
+    agree=group("market_agreement")
+
+    y["Projected margin band"]=pd.cut(y.projected_margin_strength,[-.001,3,7,14,np.inf],
+        labels=["0–3","3–7","7–14","14+"],include_lowest=True,right=False)
+    margin_band=group("Projected margin band")
+    y["Market gap band"]=pd.cut(y.market_gap,[-.001,2,4,7,np.inf],
+        labels=["0–2","2–4","4–7","7+"],include_lowest=True,right=False)
+    market_gap=group("Market gap band") if y.market_gap.notna().any() else pd.DataFrame()
+
+    misses=y.sort_values(["brier","margin_abs_error"],ascending=False).head(10).copy()
+    hits=y.sort_values(["winner_correct","brier","margin_abs_error"],ascending=[False,True,True]).head(10).copy()
+    return {"games":y,"phase":phase,"pick":pick,"favorite":fav,"agreement":agree,
+            "margin_band":margin_band,"market_gap":market_gap,"misses":misses,"hits":hits}
+
+def v20_fmt_table(df):
+    z=df.copy()
+    if "Winner_Accuracy" in z: z["Winner Accuracy"]=z.pop("Winner_Accuracy").map(lambda q:f"{q:.1%}")
+    for c in ["Brier","Margin_MAE","Total_MAE"]:
+        if c in z: z[c]=z[c].map(lambda q:round(float(q),3))
+    return z
+
 # ---------- v1.8 Football Intelligence: Opponent Adjustment ----------
 # Tests whether EPA becomes more informative after adjusting each historical
 # performance for the quality of the opponent known BEFORE that game.
@@ -1965,5 +2014,54 @@ elif page=="📈 MODEL RECORD":
     st.info("v1.9 changes the roadmap: validate the current engine on fresh 2026 games before adding more Football Intelligence layers. Rest/travel and weather remain queued until this audit is understood.")
 
 
+    st.divider()
+    st.subheader("🔎 v2.0 — 2026 Holdout Diagnostic")
+    st.write("Explains *where* the frozen Game Engine 1.0 succeeded and failed across the same 93-game Weeks 1–6 holdout. This diagnostic does not refit the model or change any predictions.")
+    st.caption("Primary question: is the engine materially stronger after it has current-season information, and do confidence/margin/market-disagreement signals behave consistently enough for production labels?")
+    if st.button("Run v2.0 Holdout Diagnostic",type="primary"):
+        with st.spinner("Diagnosing the frozen 2026 holdout..."):
+            dx=v19_2026_holdout(g,1,6); d=v20_holdout_diagnostics(dx)
+        if not d:
+            st.error("The v2.0 diagnostic could not reproduce the v1.9 holdout. Game Engine 1.0 remains unchanged.")
+        else:
+            st.markdown("### Cold start vs informed engine")
+            st.dataframe(v20_fmt_table(d["phase"]),use_container_width=True,hide_index=True)
+            cold=d["phase"].loc[d["phase"].phase.str.startswith("Cold")].iloc[0]
+            inf=d["phase"].loc[d["phase"].phase.str.startswith("Informed")].iloc[0]
+            delta=float(inf.Winner_Accuracy-cold.Winner_Accuracy)
+            st.metric("Weeks 3–6 accuracy lift vs Weeks 1–2",f"{delta:+.1%}")
+
+            st.markdown("### Where winner accuracy comes from")
+            st.caption("HOME/AWAY is the model's selected winner, not venue performance by itself.")
+            st.dataframe(v20_fmt_table(d["pick"]),use_container_width=True,hide_index=True)
+            st.markdown("#### Market favorite vs underdog selections")
+            st.dataframe(v20_fmt_table(d["favorite"]),use_container_width=True,hide_index=True)
+            st.markdown("#### Model agrees vs disagrees with market favorite")
+            st.dataframe(v20_fmt_table(d["agreement"]),use_container_width=True,hide_index=True)
+
+            st.markdown("### Projection-strength diagnostic")
+            st.dataframe(v20_fmt_table(d["margin_band"]),use_container_width=True,hide_index=True)
+            if not d["market_gap"].empty:
+                st.markdown("#### Model vs market spread-gap diagnostic")
+                st.dataframe(v20_fmt_table(d["market_gap"]),use_container_width=True,hide_index=True)
+
+            cols=["week","Game","home_win_prob","pred_margin","actual_margin","market_spread","winner_correct","brier","margin_abs_error"]
+            st.markdown("### Ten biggest probability/margin misses")
+            mm=d["misses"][cols].copy(); mm["home_win_prob"]=mm.home_win_prob.map(lambda q:f"{q:.1%}")
+            st.dataframe(mm.round(2),use_container_width=True,hide_index=True)
+            st.markdown("### Ten cleanest correct calls")
+            hh=d["hits"][cols].copy(); hh["home_win_prob"]=hh.home_win_prob.map(lambda q:f"{q:.1%}")
+            st.dataframe(hh.round(2),use_container_width=True,hide_index=True)
+
+            if delta>=.08:
+                st.info("v2.0 DIAGNOSTIC: strong early evidence of a cold-start problem. Weeks 3–6 materially outperform Weeks 1–2. Treat early-season confidence as preliminary until this pattern is confirmed on more seasons.")
+            elif delta>=.03:
+                st.info("v2.0 DIAGNOSTIC: moderate evidence that current-season information improves the engine after the opening weeks.")
+            else:
+                st.warning("v2.0 DIAGNOSTIC: the Weeks 3–6 improvement is small. Do not attribute the holdout result mainly to cold start without more evidence.")
+            st.caption("This is descriptive holdout analysis, not a new model-selection test. Subgroups are small and should not be converted into betting rules without independent validation.")
+    st.info("After v2.0: decide whether to freeze Game Engine 1.0 for the live-product phase, while keeping QB Availability as a shadow candidate. Rest/travel and weather can remain queued rather than blocking product development.")
+
+
 st.divider()
-st.caption("NFL Edge v1.9 • 2026 live-holdout audit • Probabilistic research software. A projection is not a guarantee, and PASS is a valid model decision.")
+st.caption("NFL Edge v2.0 • 2026 holdout diagnostic • Game Engine 1.0 protected • Probabilistic research software. A projection is not a guarantee, and PASS is a valid model decision.")
