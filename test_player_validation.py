@@ -23,7 +23,7 @@ def test_error_metrics_are_deterministic():
     assert metrics["n"] == 3
     assert np.isclose(metrics["mae"], 7/3)
     assert np.isclose(metrics["bias"], -1.0)
-    assert metrics["correlation"] > 0.98
+    assert np.isclose(metrics["correlation"], 0.9707253433941508)
 
 
 def test_reliability_gate_is_conservative():
