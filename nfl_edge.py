@@ -335,6 +335,130 @@ def edge_label(prob, pass_floor=.55, strong=.60):
     return "PASS"
 
 
+# ---------- v1.0 efficiency challenger ----------
+PBP_URL="https://github.com/nflverse/nflverse-data/releases/download/pbp/play_by_play_{season}.parquet"
+EFF_FEATURES=[
+    "off_epa","off_success","off_pass_epa","off_rush_epa","off_explosive","off_pass_rate",
+    "def_epa_allowed","def_success_allowed","def_pass_epa_allowed","def_rush_epa_allowed","def_explosive_allowed"
+]
+
+def load_efficiency_games(season):
+    """Build team-game efficiency rows from nflverse PBP. No market variables."""
+    use=["game_id","season","week","posteam","defteam","epa","success","pass","rush","yards_gained","play_type"]
+    p=pd.read_parquet(PBP_URL.format(season=int(season)),columns=use)
+    p=p[(p.posteam.notna())&(p.defteam.notna())&p.play_type.isin(["pass","run"])].copy()
+    p["explosive"]=((p["pass"].fillna(0).eq(1)&p.yards_gained.ge(15)) |
+                    (p["rush"].fillna(0).eq(1)&p.yards_gained.ge(10))).astype(float)
+    p["pass_epa_val"]=p.epa.where(p["pass"].fillna(0).eq(1))
+    p["rush_epa_val"]=p.epa.where(p["rush"].fillna(0).eq(1))
+    off=p.groupby(["game_id","season","week","posteam"],as_index=False).agg(
+        off_epa=("epa","mean"),off_success=("success","mean"),
+        off_pass_epa=("pass_epa_val","mean"),off_rush_epa=("rush_epa_val","mean"),
+        off_explosive=("explosive","mean"),off_pass_rate=("pass","mean"))
+    de=p.groupby(["game_id","season","week","defteam"],as_index=False).agg(
+        def_epa_allowed=("epa","mean"),def_success_allowed=("success","mean"),
+        def_pass_epa_allowed=("pass_epa_val","mean"),def_rush_epa_allowed=("rush_epa_val","mean"),
+        def_explosive_allowed=("explosive","mean"))
+    return off,de
+
+def efficiency_pregame_features(games,seasons=None,window=6):
+    """Leakage-safe rolling efficiency: every row uses only games before that game."""
+    base=pregame_features(games).copy()
+    if seasons is None: seasons=sorted(base.season.dropna().astype(int).unique())
+    off_parts=[]; def_parts=[]
+    for season in seasons:
+        try:
+            o,d=load_efficiency_games(season); off_parts.append(o); def_parts.append(d)
+        except Exception:
+            continue
+    if not off_parts:return base
+    off=pd.concat(off_parts,ignore_index=True); de=pd.concat(def_parts,ignore_index=True)
+    hist={}
+    rows=[]
+    def avg(team,key,default=0.0):
+        vals=hist.get(team,{}).get(key,[])
+        return float(np.mean(vals[-window:])) if vals else default
+    for idx,g in base.sort_values(["gameday","gametime"],na_position="last").iterrows():
+        h,a=g.home_team,g.away_team
+        r=g.to_dict()
+        for prefix,team in [("home",h),("away",a)]:
+            for k in EFF_FEATURES:r[f"{prefix}_{k}"]=avg(team,k,0.0)
+        # matchup interactions: offense relative to opponent defense
+        r["home_pass_matchup"]=r["home_off_pass_epa"]-r["away_def_pass_epa_allowed"]
+        r["away_pass_matchup"]=r["away_off_pass_epa"]-r["home_def_pass_epa_allowed"]
+        r["home_rush_matchup"]=r["home_off_rush_epa"]-r["away_def_rush_epa_allowed"]
+        r["away_rush_matchup"]=r["away_off_rush_epa"]-r["home_def_rush_epa_allowed"]
+        rows.append(r)
+
+        gid=g.get("game_id")
+        if pd.notna(gid):
+            oo=off[off.game_id==gid]; dd=de[de.game_id==gid]
+            for team in [h,a]:
+                hist.setdefault(team,{k:[] for k in EFF_FEATURES})
+                xo=oo[oo.posteam==team]
+                xd=dd[dd.defteam==team]
+                if not xo.empty:
+                    for k in EFF_FEATURES[:6]:
+                        v=xo.iloc[0][k]
+                        if pd.notna(v):hist[team][k].append(float(v))
+                if not xd.empty:
+                    for k in EFF_FEATURES[6:]:
+                        v=xd.iloc[0][k]
+                        if pd.notna(v):hist[team][k].append(float(v))
+    return pd.DataFrame(rows)
+
+CHALLENGER_FEATURES=FEATURES + [
+    "home_off_epa","away_off_epa","home_def_epa_allowed","away_def_epa_allowed",
+    "home_off_success","away_off_success","home_def_success_allowed","away_def_success_allowed",
+    "home_off_explosive","away_off_explosive","home_def_explosive_allowed","away_def_explosive_allowed",
+    "home_off_pass_rate","away_off_pass_rate",
+    "home_pass_matchup","away_pass_matchup","home_rush_matchup","away_rush_matchup"
+]
+
+def compare_v09_vs_v10(games,first_test_season=2022):
+    """Same weekly folds for baseline and efficiency challenger."""
+    f=efficiency_pregame_features(games)
+    done=f.dropna(subset=["target_margin","target_total"]).sort_values(["gameday","gametime"],na_position="last")
+    test=done[(done.season>=first_test_season)&(done.home_games_prior>=2)&(done.away_games_prior>=2)]
+    out=[]
+    for (season,week),te in test.groupby(["season","week"],sort=True):
+        cutoff=te.gameday.min()
+        tr=done[(done.gameday<cutoff)&(done.home_games_prior>=2)&(done.away_games_prior>=2)]
+        if len(tr)<300:continue
+        for name,features in [("v0.9 baseline",FEATURES),("v1.0 efficiency",CHALLENGER_FEATURES)]:
+            mm,tm=pipe(25),pipe(30)
+            wm=Pipeline([("impute",SimpleImputer(strategy="median")),("scale",StandardScaler()),
+                         ("model",LogisticRegression(C=.45,max_iter=2000))])
+            mm.fit(tr[features],tr.target_margin); tm.fit(tr[features],tr.target_total)
+            wm.fit(tr[features],(tr.target_margin>0).astype(int))
+            pm=mm.predict(te[features]); pt=tm.predict(te[features]); wp=wm.predict_proba(te[features])[:,1]
+            y=(te.target_margin>0).astype(float).to_numpy()
+            for i,(_,r) in enumerate(te.iterrows()):
+                out.append({"model":name,"season":int(season),"week":int(week),
+                            "winner_correct":bool((wp[i]>=.5)==bool(y[i])),
+                            "brier":float((wp[i]-y[i])**2),
+                            "margin_abs_error":float(abs(pm[i]-r.target_margin)),
+                            "total_abs_error":float(abs(pt[i]-r.target_total))})
+    return pd.DataFrame(out)
+
+def model_scorecard(cmp):
+    if cmp.empty:return pd.DataFrame()
+    return cmp.groupby("model").agg(
+        Games=("winner_correct","size"),
+        Winner_Accuracy=("winner_correct","mean"),
+        Brier=("brier","mean"),
+        Margin_MAE=("margin_abs_error","mean"),
+        Total_MAE=("total_abs_error","mean")
+    ).reset_index()
+
+def promotion_decision(score):
+    if len(score)<2:return "INSUFFICIENT DATA"
+    b=score[score.model=="v0.9 baseline"].iloc[0]
+    c=score[score.model=="v1.0 efficiency"].iloc[0]
+    wins=(c.Winner_Accuracy>b.Winner_Accuracy)+(c.Brier<b.Brier)+(c.Margin_MAE<b.Margin_MAE)+(c.Total_MAE<b.Total_MAE)
+    # Require probability quality + at least one additional metric; no cosmetic promotion.
+    return "PROMOTE" if (c.Brier<b.Brier and wins>=3) else "DO NOT PROMOTE"
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -365,7 +489,7 @@ def model(_g): return NFLEdgeModel().fit(_g)
 
 g=games(); m=model(g); f=m.feature_df
 st.title("🏈 NFL EDGE")
-st.markdown('<div class="small">V0.9 • Walk-forward validated NFL probability lab • Pure model vs market</div>',unsafe_allow_html=True)
+st.markdown('<div class="small">V1.0 • Efficiency challenger lab • Baseline protected</div>',unsafe_allow_html=True)
 
 page=st.radio("Navigation",["🏈 GAMES","📊 PROPS","🏆 FANTASY","🔬 SIMULATOR","📈 MODEL RECORD"],horizontal=True,label_visibility="collapsed")
 
@@ -552,7 +676,35 @@ elif page=="📈 MODEL RECORD":
             st.dataframe(yr[["season","Games","Winner Accuracy","Brier","Margin_MAE","Total_MAE"]].round(3),
                          use_container_width=True,hide_index=True)
             st.caption("Lower Brier is better. ATS thresholds are diagnostics, not betting guarantees.")
-    st.info("Next: freeze live forecasts before kickoff and grade them afterward in a permanent prediction ledger.")
+    st.divider()
+    st.subheader("🧪 v1.0 Efficiency Challenger")
+    st.write("The live v0.9 model stays protected unless the EPA/success-rate challenger beats it on the same historical weeks.")
+    st.caption("Adds rolling offensive/defensive EPA, success rate, pass/rush EPA, explosive rate, pass rate, and matchup interactions. Market lines are not inputs.")
+    if st.button("Run v1.0 baseline vs challenger test"):
+        with st.spinner("Downloading nflverse play-by-play and running identical weekly folds..."):
+            cmp=compare_v09_vs_v10(g,2022)
+        if cmp.empty:
+            st.error("Efficiency data could not be loaded. The live baseline remains unchanged.")
+        else:
+            sc=model_scorecard(cmp)
+            show=sc.copy()
+            show["Winner Accuracy"]=show.Winner_Accuracy.map(lambda x:f"{x:.1%}")
+            st.dataframe(show[["model","Games","Winner Accuracy","Brier","Margin_MAE","Total_MAE"]].round(3),
+                         use_container_width=True,hide_index=True)
+            decision=promotion_decision(sc)
+            if decision=="PROMOTE":
+                st.success("PROMOTION GATE: PASS — the efficiency challenger earned promotion criteria.")
+            else:
+                st.warning("PROMOTION GATE: DO NOT PROMOTE — keep v0.9 as the live baseline and continue feature research.")
+            st.subheader("Year-by-year comparison")
+            yr=cmp.groupby(["season","model"]).agg(
+                Games=("winner_correct","size"),Winner=("winner_correct","mean"),
+                Brier=("brier","mean"),Margin_MAE=("margin_abs_error","mean"),
+                Total_MAE=("total_abs_error","mean")).reset_index()
+            yr["Winner Accuracy"]=yr.Winner.map(lambda x:f"{x:.1%}")
+            st.dataframe(yr[["season","model","Games","Winner Accuracy","Brier","Margin_MAE","Total_MAE"]].round(3),
+                         use_container_width=True,hide_index=True)
+    st.info("v1.0 rule: no feature is promoted because it sounds smart. It must improve out-of-sample results.")
 
 st.divider()
-st.caption("NFL Edge v0.9 • Probabilistic research software. A projection is not a guarantee, and PASS is a valid model decision.")
+st.caption("NFL Edge v1.0 • Probabilistic research software. A projection is not a guarantee, and PASS is a valid model decision.")
