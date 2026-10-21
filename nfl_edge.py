@@ -310,6 +310,11 @@ st.markdown("""
 [data-testid="stMetric"]{border:1px solid rgba(128,128,128,.25);padding:12px;border-radius:12px}
 h1{margin-bottom:0}
 .small{opacity:.72;font-size:.9rem}
+.edge-card{border:1px solid rgba(128,128,128,.25);border-radius:16px;padding:14px 16px;margin:10px 0 14px}
+.edge-game{font-size:1.15rem;font-weight:700;margin-bottom:4px}
+.edge-score{font-size:1.05rem;font-weight:600}
+.edge-muted{opacity:.72;font-size:.88rem}
+@media(max-width:700px){.block-container{padding-left:.75rem;padding-right:.75rem}[data-testid="stMetricValue"]{font-size:1.35rem}}
 </style>
 """,unsafe_allow_html=True)
 
@@ -322,17 +327,40 @@ def model(_g): return NFLEdgeModel().fit(_g)
 
 g=games(); m=model(g); f=m.feature_df
 st.title("🏈 NFL EDGE")
-st.markdown('<div class="small">V0.7 • One engine. Games, props, fantasy and simulations.</div>',unsafe_allow_html=True)
+st.markdown('<div class="small">V0.8 • Mobile-first NFL probability lab • Pure model vs market</div>',unsafe_allow_html=True)
 
 page=st.radio("Navigation",["🏈 GAMES","📊 PROPS","🏆 FANTASY","🔬 SIMULATOR","📈 MODEL RECORD"],horizontal=True,label_visibility="collapsed")
 
+def relevant_season_week():
+    seasons=sorted(f.season.dropna().astype(int).unique(),reverse=True)
+    season=seasons[0]
+    sf=f[f.season==season]
+    unplayed=sf[sf.home_score.isna() | sf.away_score.isna()]
+    week=int(sorted(unplayed.week.dropna().astype(int).unique())[0]) if not unplayed.empty else int(sf.week.dropna().astype(int).max())
+    return season,week
+
+DEFAULT_SEASON,DEFAULT_WEEK=relevant_season_week()
+
 def selectors(prefix=""):
     seasons=sorted(f.season.dropna().astype(int).unique(),reverse=True)
-    season=st.selectbox("Season",seasons,key=prefix+"season")
-    weeks=sorted(f[f.season==season].week.dropna().unique())
-    week=st.selectbox("Week",weeks,index=len(weeks)-1,key=prefix+"week")
+    season=st.selectbox("Season",seasons,index=seasons.index(DEFAULT_SEASON) if DEFAULT_SEASON in seasons else 0,key=prefix+"season")
+    weeks=sorted(f[f.season==season].week.dropna().astype(int).unique())
+    target=DEFAULT_WEEK if season==DEFAULT_SEASON and DEFAULT_WEEK in weeks else weeks[-1]
+    week=st.selectbox("Week",weeks,index=weeks.index(target),key=prefix+"week")
     slate=f[(f.season==season)&(f.week==week)]
     return season,week,slate
+
+def market_text(row):
+    s=row.get("spread_line",np.nan)
+    if pd.isna(s): return "No spread"
+    s=float(s)
+    if s>0:return f"{row.home_team} -{abs(s):g}"
+    if s<0:return f"{row.away_team} -{abs(s):g}"
+    return "Pick'em"
+
+def vulnerability(score):
+    if pd.isna(score): return "—"
+    return "HIGH" if score>=45 else ("WATCH" if score>=30 else "LOW")
 
 def matchup_select(slate,key):
     labels=(slate.away_team+" @ "+slate.home_team).tolist()
@@ -354,28 +382,27 @@ def game_card(row,n=30000):
     return r
 
 if page=="🏈 GAMES":
-    st.header("Weekly Games")
+    st.header("This Week")
     season,week,slate=selectors("g")
-    rows=[]
+    st.caption(f"{season} • Week {week} • Pure model; market lines are comparison only.")
+    if slate.empty:
+        st.info("No games found for this selection.")
     for _,row in slate.iterrows():
-        r=m.predict(row,15000,seed=int(row.name)%10000)
-        rows.append({
-            "Game":f"{row.away_team} @ {row.home_team}",
-            "NFL Edge Score":f"{row.away_team} {r['away_score']:.1f} – {row.home_team} {r['home_score']:.1f}",
-            "Home Win":r["home_win_prob"],
-            "Model Margin":r["margin"],
-            "Market":row.get("spread_line",np.nan),
-            "Total":r["total"],
-            "Market O/U":row.get("total_line",np.nan),
-            "Upset":r.get("upset_score",np.nan)})
-    board=pd.DataFrame(rows)
-    if not board.empty:
-        view=board.copy()
-        view["Home Win"]=view["Home Win"].map(lambda x:f"{x:.1%}")
-        for c in ["Model Margin","Market","Total","Market O/U","Upset"]:
-            view[c]=pd.to_numeric(view[c],errors="coerce").round(1)
-        st.dataframe(view,use_container_width=True,hide_index=True)
-        st.caption("Market columns are comparisons, not inputs to the pure model.")
+        r=m.predict(row,18000,seed=int(row.name)%10000)
+        edge=(r["margin"]-float(row.spread_line)) if pd.notna(row.get("spread_line",np.nan)) else np.nan
+        pick=row.home_team if r["home_win_prob"]>=.5 else row.away_team
+        ou=row.get("total_line",np.nan)
+        ou_txt=f"{float(ou):g}" if pd.notna(ou) else "—"
+        edge_txt=f"{edge:+.1f}" if pd.notna(edge) else "—"
+        st.markdown(
+            f"""<div class="edge-card">
+            <div class="edge-game">{row.away_team} @ {row.home_team}</div>
+            <div class="edge-score">NFL Edge: {row.away_team} {r['away_score']:.1f} — {row.home_team} {r['home_score']:.1f}</div>
+            <div class="edge-muted">Pick: <b>{pick}</b> · Home win {r['home_win_prob']:.0%} · Market {market_text(row)} · O/U {ou_txt}</div>
+            <div class="edge-muted">Model margin {r['margin']:+.1f} · Total {r['total']:.1f} · Raw spread edge {edge_txt} · Vulnerability <b>{vulnerability(r.get('upset_score',np.nan))}</b></div>
+            </div>""",unsafe_allow_html=True)
+    st.caption("Raw spread edge = model home margin − nflverse home-margin line. Positive leans home ATS; negative leans away ATS.")
+    st.info("V0.8 confidence/vulnerability indicators are research signals, not guarantees. PASS remains a valid model outcome.")
 
 elif page=="🔬 SIMULATOR":
     st.header("Game Simulator")
@@ -384,6 +411,12 @@ elif page=="🔬 SIMULATOR":
     if row is not None:
         n=st.slider("Monte Carlo simulations",10000,100000,50000,10000)
         r=game_card(row,n)
+        lo_h,hi_h=np.percentile(r["home_scores"],[20,80])
+        lo_a,hi_a=np.percentile(r["away_scores"],[20,80])
+        st.subheader("20–80% simulated score range")
+        ra,rb=st.columns(2)
+        ra.metric(row.away_team,f"{lo_a:.0f}–{hi_a:.0f}")
+        rb.metric(row.home_team,f"{lo_h:.0f}–{hi_h:.0f}")
         if "home_cover_prob" in r or "over_prob" in r:
             a,b=st.columns(2)
             if "home_cover_prob" in r:a.metric("Home cover probability",f"{r['home_cover_prob']:.1%}")
@@ -446,8 +479,9 @@ elif page in ["📊 PROPS","🏆 FANTASY"]:
             st.caption("Manual market lines for now. Automated odds/prop ingestion comes after model validation.")
 
 elif page=="📈 MODEL RECORD":
-    st.header("Model Record")
+    st.header("Model Record & Validation")
     st.write("NFL Edge should earn trust through frozen, out-of-sample results—not by changing predictions after games.")
+    st.caption("Current walk-forward test trains only on seasons before each test season. A permanent live prediction ledger is next.")
     if st.button("Run game-model walk-forward record",type="primary"):
         with st.spinner("Backtesting..."): bt=walk_forward_backtest(g,2022)
         if not bt.empty:
@@ -460,4 +494,4 @@ elif page=="📈 MODEL RECORD":
     st.info("The permanent prediction ledger is the next deployment-stage feature: predictions will be timestamped and never overwritten after kickoff.")
 
 st.divider()
-st.caption("NFL Edge is probabilistic research software. A projection is not a guarantee, and PASS is a valid model decision.")
+st.caption("NFL Edge v0.8 • Probabilistic research software. A projection is not a guarantee, and PASS is a valid model decision.")
