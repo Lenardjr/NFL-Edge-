@@ -1,0 +1,33 @@
+name: Player schema compatibility fix
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Normalize nflverse player team schema
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('nfl_edge.py')
+          s = p.read_text()
+          old = '''    d=pd.concat(frames,ignore_index=True)\n    for c in ["season","week"]:\n        d[c]=pd.to_numeric(d[c],errors="coerce")\n    return d\n'''
+          new = '''    d=pd.concat(frames,ignore_index=True)\n    # nflverse changed the weekly player team column in newer releases.\n    # Normalize it once at ingestion so the player engine/backtests stay compatible\n    # with both historical `recent_team` and newer `team`/`team_abbr` schemas.\n    if "recent_team" not in d.columns:\n        for team_col in ["team", "team_abbr", "club_code"]:\n            if team_col in d.columns:\n                d["recent_team"]=d[team_col]\n                break\n    if "recent_team" not in d.columns:\n        d["recent_team"]=pd.NA\n    d["recent_team"]=d["recent_team"].map(lambda x: TEAM_ALIASES.get(str(x),str(x)) if pd.notna(x) else x)\n    for c in ["season","week"]:\n        d[c]=pd.to_numeric(d[c],errors="coerce")\n    return d\n'''
+          if old not in s:
+              raise SystemExit('Target load_player_stats block not found; refusing unsafe patch')
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+          PY
+      - name: Syntax check
+        run: python -m py_compile nfl_edge.py
+      - name: Commit fix
+        run: |
+          git config user.name "NFL Edge Builder"
+          git config user.email "actions@users.noreply.github.com"
+          git add nfl_edge.py
+          git diff --cached --quiet && exit 0
+          git commit -m "Fix nflverse player team schema compatibility"
+          git push
