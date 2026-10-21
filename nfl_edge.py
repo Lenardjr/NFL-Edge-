@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import Ridge, LogisticRegression
+from sklearn.ensemble import HistGradientBoostingRegressor, HistGradientBoostingClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
@@ -459,6 +460,126 @@ def promotion_decision(score):
     # Require probability quality + at least one additional metric; no cosmetic promotion.
     return "PROMOTE" if (c.Brier<b.Brier and wins>=3) else "DO NOT PROMOTE"
 
+# ---------- v1.1 model tournament + feature ablation ----------
+ABLATIONS={
+    "Baseline": FEATURES,
+    "EPA core": FEATURES+[
+        "home_off_epa","away_off_epa","home_def_epa_allowed","away_def_epa_allowed"
+    ],
+    "Pass efficiency": FEATURES+[
+        "home_off_pass_epa","away_off_pass_epa","home_def_pass_epa_allowed","away_def_pass_epa_allowed",
+        "home_pass_matchup","away_pass_matchup"
+    ],
+    "Rush efficiency": FEATURES+[
+        "home_off_rush_epa","away_off_rush_epa","home_def_rush_epa_allowed","away_def_rush_epa_allowed",
+        "home_rush_matchup","away_rush_matchup"
+    ],
+    "Success rate": FEATURES+[
+        "home_off_success","away_off_success","home_def_success_allowed","away_def_success_allowed"
+    ],
+    "Explosives": FEATURES+[
+        "home_off_explosive","away_off_explosive","home_def_explosive_allowed","away_def_explosive_allowed"
+    ],
+    "All efficiency": CHALLENGER_FEATURES
+}
+
+def nonlinear_regressor():
+    return Pipeline([("impute",SimpleImputer(strategy="median")),
+                     ("model",HistGradientBoostingRegressor(max_iter=120,learning_rate=.045,
+                         max_leaf_nodes=12,l2_regularization=2.0,random_state=17))])
+
+def nonlinear_classifier():
+    return Pipeline([("impute",SimpleImputer(strategy="median")),
+                     ("model",HistGradientBoostingClassifier(max_iter=120,learning_rate=.045,
+                         max_leaf_nodes=12,l2_regularization=2.0,random_state=17))])
+
+def v11_model_tournament(games,first_test_season=2022):
+    """Same walk-forward folds for every architecture and feature family."""
+    f=efficiency_pregame_features(games)
+    done=f.dropna(subset=["target_margin","target_total"]).sort_values(["gameday","gametime"],na_position="last")
+    test=done[(done.season>=first_test_season)&(done.home_games_prior>=2)&(done.away_games_prior>=2)]
+    out=[]
+    candidates=[
+        ("v0.9 Ridge",FEATURES,"linear"),
+        ("Efficiency Ridge",CHALLENGER_FEATURES,"linear"),
+        ("Efficiency Boost",CHALLENGER_FEATURES,"boost"),
+    ]
+    for (season,week),te in test.groupby(["season","week"],sort=True):
+        cutoff=te.gameday.min()
+        tr=done[(done.gameday<cutoff)&(done.home_games_prior>=2)&(done.away_games_prior>=2)]
+        if len(tr)<300:continue
+        ywin=(tr.target_margin>0).astype(int)
+        actual=(te.target_margin>0).astype(float).to_numpy()
+        for name,features,kind in candidates:
+            if kind=="linear":
+                mm,tm=pipe(25),pipe(30)
+                wm=Pipeline([("impute",SimpleImputer(strategy="median")),("scale",StandardScaler()),
+                             ("model",LogisticRegression(C=.45,max_iter=2000))])
+            else:
+                mm,tm=nonlinear_regressor(),nonlinear_regressor()
+                wm=nonlinear_classifier()
+            mm.fit(tr[features],tr.target_margin); tm.fit(tr[features],tr.target_total); wm.fit(tr[features],ywin)
+            pm=mm.predict(te[features]); pt=tm.predict(te[features]); wp=wm.predict_proba(te[features])[:,1]
+            for i,(_,r) in enumerate(te.iterrows()):
+                out.append({"candidate":name,"season":int(season),"week":int(week),
+                            "winner_correct":bool((wp[i]>=.5)==bool(actual[i])),
+                            "brier":float((wp[i]-actual[i])**2),
+                            "margin_abs_error":float(abs(pm[i]-r.target_margin)),
+                            "total_abs_error":float(abs(pt[i]-r.target_total))})
+    return pd.DataFrame(out)
+
+def v11_ablation_test(games,first_test_season=2022):
+    """Linear ablation isolates which football feature families add signal."""
+    f=efficiency_pregame_features(games)
+    done=f.dropna(subset=["target_margin","target_total"]).sort_values(["gameday","gametime"],na_position="last")
+    test=done[(done.season>=first_test_season)&(done.home_games_prior>=2)&(done.away_games_prior>=2)]
+    rows=[]
+    for (season,week),te in test.groupby(["season","week"],sort=True):
+        cutoff=te.gameday.min()
+        tr=done[(done.gameday<cutoff)&(done.home_games_prior>=2)&(done.away_games_prior>=2)]
+        if len(tr)<300:continue
+        actual=(te.target_margin>0).astype(float).to_numpy()
+        for group,features in ABLATIONS.items():
+            mm,tm=pipe(25),pipe(30)
+            wm=Pipeline([("impute",SimpleImputer(strategy="median")),("scale",StandardScaler()),
+                         ("model",LogisticRegression(C=.45,max_iter=2000))])
+            mm.fit(tr[features],tr.target_margin); tm.fit(tr[features],tr.target_total)
+            wm.fit(tr[features],(tr.target_margin>0).astype(int))
+            pm=mm.predict(te[features]); pt=tm.predict(te[features]); wp=wm.predict_proba(te[features])[:,1]
+            rows.append({"season":int(season),"week":int(week),"feature_group":group,"games":len(te),
+                         "winner_correct":float(np.mean((wp>=.5)==actual.astype(bool))),
+                         "brier":float(np.mean((wp-actual)**2)),
+                         "margin_mae":float(np.mean(np.abs(pm-te.target_margin.to_numpy()))),
+                         "total_mae":float(np.mean(np.abs(pt-te.target_total.to_numpy())))})
+    return pd.DataFrame(rows)
+
+def weighted_ablation_summary(ab):
+    if ab.empty:return pd.DataFrame()
+    rows=[]
+    for name,x in ab.groupby("feature_group"):
+        n=x.games.sum()
+        rows.append({"Feature group":name,"Games":int(n),
+                     "Winner Accuracy":float(np.average(x.winner_correct,weights=x.games)),
+                     "Brier":float(np.average(x.brier,weights=x.games)),
+                     "Margin MAE":float(np.average(x.margin_mae,weights=x.games)),
+                     "Total MAE":float(np.average(x.total_mae,weights=x.games))})
+    return pd.DataFrame(rows)
+
+def tournament_summary(t):
+    if t.empty:return pd.DataFrame()
+    return t.groupby("candidate").agg(Games=("winner_correct","size"),
+        Winner_Accuracy=("winner_correct","mean"),Brier=("brier","mean"),
+        Margin_MAE=("margin_abs_error","mean"),Total_MAE=("total_abs_error","mean")).reset_index()
+
+def component_winners(score):
+    if score.empty:return {}
+    return {
+        "Winner probability":score.loc[score.Brier.idxmin(),"candidate"],
+        "Straight-up accuracy":score.loc[score.Winner_Accuracy.idxmax(),"candidate"],
+        "Margin":score.loc[score.Margin_MAE.idxmin(),"candidate"],
+        "Total":score.loc[score.Total_MAE.idxmin(),"candidate"]
+    }
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -489,7 +610,7 @@ def model(_g): return NFLEdgeModel().fit(_g)
 
 g=games(); m=model(g); f=m.feature_df
 st.title("🏈 NFL EDGE")
-st.markdown('<div class="small">V1.0 • Efficiency challenger lab • Baseline protected</div>',unsafe_allow_html=True)
+st.markdown('<div class="small">V1.1 • Model tournament + feature ablation • Baseline protected</div>',unsafe_allow_html=True)
 
 page=st.radio("Navigation",["🏈 GAMES","📊 PROPS","🏆 FANTASY","🔬 SIMULATOR","📈 MODEL RECORD"],horizontal=True,label_visibility="collapsed")
 
@@ -704,7 +825,48 @@ elif page=="📈 MODEL RECORD":
             yr["Winner Accuracy"]=yr.Winner.map(lambda x:f"{x:.1%}")
             st.dataframe(yr[["season","model","Games","Winner Accuracy","Brier","Margin_MAE","Total_MAE"]].round(3),
                          use_container_width=True,hide_index=True)
-    st.info("v1.0 rule: no feature is promoted because it sounds smart. It must improve out-of-sample results.")
+    st.divider()
+    st.subheader("🏟️ v1.1 Model Tournament")
+    st.write("Ridge baseline vs linear efficiency vs nonlinear gradient boosting — all tested on identical historical weeks.")
+    if st.button("Run v1.1 model tournament"):
+        with st.spinner("Running three architectures across the walk-forward history..."):
+            tour=v11_model_tournament(g,2022)
+        if tour.empty:
+            st.error("Tournament data could not be produced. Baseline remains protected.")
+        else:
+            ts=tournament_summary(tour)
+            display=ts.copy()
+            display["Winner Accuracy"]=display.Winner_Accuracy.map(lambda x:f"{x:.1%}")
+            st.dataframe(display[["candidate","Games","Winner Accuracy","Brier","Margin_MAE","Total_MAE"]].round(3),
+                         use_container_width=True,hide_index=True)
+            winners=component_winners(ts)
+            st.markdown("**Best component by metric**")
+            for metric,name in winners.items(): st.write(f"• {metric}: **{name}**")
+            if len(set(winners.values()))>1:
+                st.info("HYBRID SIGNAL: different models win different objectives. NFL Edge should not force one universal model.")
+            else:
+                st.success(f"CONSENSUS SIGNAL: {next(iter(winners.values()))} leads all core objectives.")
+
+    st.subheader("🧬 Feature Ablation")
+    st.write("Tests feature families independently so useful football signal is not buried inside a noisy all-features model.")
+    if st.button("Run v1.1 feature ablation"):
+        with st.spinner("Testing EPA, pass efficiency, rush efficiency, success rate, explosives, and the full set..."):
+            ab=v11_ablation_test(g,2022)
+        if ab.empty:
+            st.error("Ablation data could not be produced.")
+        else:
+            sm=weighted_ablation_summary(ab)
+            baseline=sm[sm["Feature group"]=="Baseline"].iloc[0]
+            sm["Δ Brier"]=sm.Brier-baseline.Brier
+            sm["Δ Margin MAE"]=sm["Margin MAE"]-baseline["Margin MAE"]
+            sm["Δ Total MAE"]=sm["Total MAE"]-baseline["Total MAE"]
+            sm["Winner Accuracy"]=sm["Winner Accuracy"].map(lambda x:f"{x:.1%}")
+            st.dataframe(sm[["Feature group","Games","Winner Accuracy","Brier","Margin MAE","Total MAE",
+                             "Δ Brier","Δ Margin MAE","Δ Total MAE"]].round(3),
+                         use_container_width=True,hide_index=True)
+            st.caption("Negative deltas are improvements versus v0.9. This table determines which feature families advance to the next hybrid model.")
+
+    st.info("v1.1 rule: choose the best validated model separately for win probability, margin, and total. No forced one-model-fits-all architecture.")
 
 st.divider()
-st.caption("NFL Edge v1.0 • Probabilistic research software. A projection is not a guarantee, and PASS is a valid model decision.")
+st.caption("NFL Edge v1.1 • Probabilistic research software. A projection is not a guarantee, and PASS is a valid model decision.")
