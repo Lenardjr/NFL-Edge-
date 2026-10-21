@@ -1,5 +1,5 @@
 from __future__ import annotations
-# NFL Edge v0.7 deployment edition — standalone Streamlit app
+# NFL Edge v1.4 — standalone Streamlit app; Game Engine 1.0 protected
 # Data source attribution: nflverse (CC-BY 4.0 where applicable).
 
 import math
@@ -820,6 +820,117 @@ def v13_yearly(x):
         Brier=("brier","mean"),Margin_MAE=("margin_error","mean"),
         Total_MAE=("total_error","mean")).reset_index()
 
+
+# ---------- v1.4 Football Intelligence: QB Quality ----------
+# This first football-intelligence challenger is deliberately PRE-GAME and leakage-safe.
+# It measures the recent quality of each team's QB room from completed prior weeks only.
+# It does NOT claim to know a same-week starter injury/benching before we add a true injury/depth-chart feed.
+QB_QUALITY_FEATURES = [
+    "home_qb_epa","away_qb_epa","qb_epa_diff",
+    "home_qb_ypa","away_qb_ypa","qb_ypa_diff",
+    "home_qb_comp","away_qb_comp","qb_comp_diff",
+    "home_qb_td_rate","away_qb_td_rate","qb_td_rate_diff",
+    "home_qb_int_rate","away_qb_int_rate","qb_int_rate_diff"
+]
+QB_PROB_FEATURES = EPA_CORE_FEATURES + QB_QUALITY_FEATURES
+
+def qb_team_week_table(stats):
+    """Build team/week QB performance, then shift rolling form so week W uses only weeks < W."""
+    if stats is None or stats.empty:return pd.DataFrame()
+    d=stats.copy()
+    if "position" in d.columns:d=d[d.position.astype(str).eq("QB")]
+    need=["season","week","recent_team","attempts"]
+    if any(c not in d.columns for c in need):return pd.DataFrame()
+    for c in ["season","week","attempts","completions","passing_yards","passing_tds","interceptions","passing_epa"]:
+        if c in d.columns:d[c]=pd.to_numeric(d[c],errors="coerce").fillna(0)
+    d=d[d.attempts>0].copy()
+    if d.empty:return pd.DataFrame()
+    # Sum QB room production. This handles games with multiple QBs without peeking at a future starter identity.
+    agg={"attempts":"sum"}
+    for c in ["completions","passing_yards","passing_tds","interceptions","passing_epa"]:
+        if c in d.columns:agg[c]="sum"
+    w=d.groupby(["season","week","recent_team"],as_index=False).agg(agg).rename(columns={"recent_team":"team"})
+    for c in ["completions","passing_yards","passing_tds","interceptions","passing_epa"]:
+        if c not in w:w[c]=0.0
+    den=w.attempts.clip(lower=1)
+    w["qb_epa"]=w.passing_epa/den
+    w["qb_ypa"]=w.passing_yards/den
+    w["qb_comp"]=w.completions/den
+    w["qb_td_rate"]=w.passing_tds/den
+    w["qb_int_rate"]=w.interceptions/den
+    metrics=["qb_epa","qb_ypa","qb_comp","qb_td_rate","qb_int_rate"]
+    w=w.sort_values(["team","season","week"])
+    for m in metrics:
+        # Current week excluded. Up to six prior games, with minimum one observation.
+        w[m+"_pregame"]=(w.groupby(["team","season"])[m]
+                           .transform(lambda s:s.shift(1).rolling(6,min_periods=1).mean()))
+    return w[["season","week","team"]+[m+"_pregame" for m in metrics]]
+
+def add_qb_quality_features(feature_frame, stats):
+    """Merge leakage-safe team QB form onto the existing game feature frame."""
+    f=feature_frame.copy()
+    q=qb_team_week_table(stats)
+    if q.empty:
+        for c in QB_QUALITY_FEATURES:f[c]=np.nan
+        return f
+    home=q.rename(columns={"team":"home_team",**{m+"_pregame":"home_"+m for m in ["qb_epa","qb_ypa","qb_comp","qb_td_rate","qb_int_rate"]}})
+    away=q.rename(columns={"team":"away_team",**{m+"_pregame":"away_"+m for m in ["qb_epa","qb_ypa","qb_comp","qb_td_rate","qb_int_rate"]}})
+    f=f.merge(home,on=["season","week","home_team"],how="left")
+    f=f.merge(away,on=["season","week","away_team"],how="left")
+    for m in ["qb_epa","qb_ypa","qb_comp","qb_td_rate","qb_int_rate"]:
+        f[m+"_diff"]=f["home_"+m]-f["away_"+m]
+    return f
+
+def v14_qb_quality_backtest(games, stats, first_test_season=2022):
+    """Game Engine 1.0 vs identical engine with QB quality added ONLY to win probability."""
+    f=add_qb_quality_features(efficiency_pregame_features(games),stats)
+    done=f.dropna(subset=["target_margin","target_total"]).sort_values(["gameday","gametime"],na_position="last")
+    test=done[(done.season>=first_test_season)&(done.home_games_prior>=2)&(done.away_games_prior>=2)]
+    rows=[]
+    for (season,week),te in test.groupby(["season","week"],sort=True):
+        cutoff=te.gameday.min()
+        tr=done[(done.gameday<cutoff)&(done.home_games_prior>=2)&(done.away_games_prior>=2)]
+        if len(tr)<300:continue
+        actual=(te.target_margin>0).astype(float).to_numpy()
+        specs=[("Game Engine 1.0",EPA_CORE_FEATURES),("QB Quality Challenger",QB_PROB_FEATURES)]
+        for name,features in specs:
+            wm=_linear_classifier(); wm.fit(tr[features],(tr.target_margin>0).astype(int))
+            wp=wm.predict_proba(te[features])[:,1]
+            for i,(_,r) in enumerate(te.iterrows()):
+                rows.append({"model":name,"season":int(season),"week":int(week),
+                             "winner_correct":bool((wp[i]>=.5)==bool(actual[i])),
+                             "brier":float((wp[i]-actual[i])**2)})
+    return pd.DataFrame(rows)
+
+def v14_qb_summary(x):
+    if x.empty:return pd.DataFrame()
+    return x.groupby("model").agg(Games=("winner_correct","size"),
+        Winner_Accuracy=("winner_correct","mean"),Brier=("brier","mean")).reset_index()
+
+def v14_qb_yearly(x):
+    if x.empty:return pd.DataFrame()
+    return x.groupby(["season","model"]).agg(Games=("winner_correct","size"),
+        Winner_Accuracy=("winner_correct","mean"),Brier=("brier","mean")).reset_index()
+
+def v14_qb_bootstrap(x,n_boot=4000,seed=41):
+    """Paired game-level bootstrap of challenger minus Game Engine 1.0. Negative Brier is better."""
+    if x.empty:return pd.DataFrame()
+    keys=["season","week"]
+    # Pair by stable within-week row order because both candidates are emitted over identical te rows.
+    b=x[x.model=="Game Engine 1.0"].reset_index(drop=True)
+    c=x[x.model=="QB Quality Challenger"].reset_index(drop=True)
+    n=min(len(b),len(c))
+    if n==0:return pd.DataFrame()
+    b=b.iloc[:n]; c=c.iloc[:n]
+    d_acc=c.winner_correct.astype(float).to_numpy()-b.winner_correct.astype(float).to_numpy()
+    d_brier=c.brier.to_numpy()-b.brier.to_numpy()
+    rng=np.random.default_rng(seed); idx=rng.integers(0,n,size=(n_boot,n))
+    acc=np.mean(d_acc[idx],axis=1); br=np.mean(d_brier[idx],axis=1)
+    return pd.DataFrame([
+        {"Metric":"Winner accuracy","Delta":float(d_acc.mean()),"95% CI low":float(np.quantile(acc,.025)),"95% CI high":float(np.quantile(acc,.975)),"Clear improvement":bool(np.quantile(acc,.025)>0)},
+        {"Metric":"Brier","Delta":float(d_brier.mean()),"95% CI low":float(np.quantile(br,.025)),"95% CI high":float(np.quantile(br,.975)),"Clear improvement":bool(np.quantile(br,.975)<0)}
+    ])
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -850,7 +961,7 @@ def model(_g): return NFLEdgeModel().fit(_g)
 
 g=games(); m=model(g); f=m.feature_df
 st.title("🏈 NFL EDGE")
-st.markdown('<div class="small">V1.3 • Game Engine 1.0 • Specialized production architecture</div>',unsafe_allow_html=True)
+st.markdown('<div class="small">V1.4 • Football Intelligence Lab • Game Engine 1.0 protected</div>',unsafe_allow_html=True)
 
 page=st.radio("Navigation",["🏈 GAMES","📊 PROPS","🏆 FANTASY","🔬 SIMULATOR","📈 MODEL RECORD"],horizontal=True,label_visibility="collapsed")
 
@@ -1188,7 +1299,37 @@ elif page=="📈 MODEL RECORD":
             else:
                 st.warning("ENGINE GATE: HOLD — keep researching before treating the specialized architecture as final.")
 
-    st.info("Next research layer: quarterback availability/quality, injuries, offensive line, opponent adjustment, offseason carryover, travel/rest, and weather — each added as a separately validated feature family.")
+    st.divider()
+    st.subheader("🧠 v1.4 Football Intelligence — QB Quality")
+    st.write("First challenger layer: recent quarterback-room quality from completed prior weeks only.")
+    st.caption("Leakage guard: week W never uses week W QB production. This stage tests QB quality only; same-week starter availability/injury status is intentionally NOT inferred until a true pregame injury/depth-chart source is added.")
+    if st.button("Run v1.4 QB Quality Challenge",type="primary"):
+        with st.spinner("Loading historical QB production and running paired walk-forward validation..."):
+            ps=players()
+            qb=v14_qb_quality_backtest(g,ps,2022)
+        if qb.empty:
+            st.error("QB Quality validation could not be produced. Game Engine 1.0 remains unchanged.")
+        else:
+            qs=v14_qb_summary(qb); qshow=qs.copy()
+            qshow["Winner Accuracy"]=qshow.Winner_Accuracy.map(lambda x:f"{x:.1%}")
+            st.dataframe(qshow[["model","Games","Winner Accuracy","Brier"]].round(4),use_container_width=True,hide_index=True)
+            st.subheader("Year-by-year QB challenger stability")
+            qy=v14_qb_yearly(qb); qyshow=qy.copy(); qyshow["Winner Accuracy"]=qyshow.Winner_Accuracy.map(lambda x:f"{x:.1%}")
+            st.dataframe(qyshow[["season","model","Games","Winner Accuracy","Brier"]].round(4),use_container_width=True,hide_index=True)
+            st.subheader("Paired bootstrap vs Game Engine 1.0")
+            qboot=v14_qb_bootstrap(qb)
+            st.dataframe(qboot.round(4),use_container_width=True,hide_index=True)
+            base=qs[qs.model=="Game Engine 1.0"].iloc[0]; chal=qs[qs.model=="QB Quality Challenger"].iloc[0]
+            st.markdown("### QB layer delta")
+            st.write(f"Winner accuracy: **{(chal.Winner_Accuracy-base.Winner_Accuracy):+.2%}**")
+            st.write(f"Brier: **{(chal.Brier-base.Brier):+.4f}**")
+            clear=qboot[qboot["Clear improvement"]]
+            if chal.Brier < base.Brier and chal.Winner_Accuracy >= base.Winner_Accuracy:
+                if len(clear): st.success("QB QUALITY GATE: STRONG PASS — aggregate profile improves and at least one paired metric clears the 95% bootstrap bar.")
+                else: st.info("QB QUALITY GATE: PROMISING — aggregate profile improves, but statistical certainty is not yet strong enough for automatic promotion.")
+            else:
+                st.warning("QB QUALITY GATE: HOLD — Game Engine 1.0 stays protected. We learn from the result without forcing the feature into production.")
+    st.info("Research queue after QB quality: true QB availability/injuries → offensive line → opponent adjustment → offseason carryover → travel/rest → weather. Each must earn promotion independently.")
 
 st.divider()
-st.caption("NFL Edge v1.3 • Probabilistic research software. A projection is not a guarantee, and PASS is a valid model decision.")
+st.caption("NFL Edge v1.4 • Probabilistic research software. A projection is not a guarantee, and PASS is a valid model decision.")
