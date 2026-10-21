@@ -1,5 +1,5 @@
 from __future__ import annotations
-# NFL Edge v1.4 — standalone Streamlit app; Game Engine 1.0 protected
+# NFL Edge v1.5 — standalone Streamlit app; Game Engine 1.0 protected
 # Data source attribution: nflverse (CC-BY 4.0 where applicable).
 
 import math
@@ -931,6 +931,124 @@ def v14_qb_bootstrap(x,n_boot=4000,seed=41):
         {"Metric":"Brier","Delta":float(d_brier.mean()),"95% CI low":float(np.quantile(br,.025)),"95% CI high":float(np.quantile(br,.975)),"Clear improvement":bool(np.quantile(br,.975)<0)}
     ])
 
+# ---------- v1.5 Football Intelligence: QB Availability / Starter Adjustment ----------
+# Historical validation uses official weekly depth charts + injury reports only.
+# We intentionally restrict the backtest to seasons where the upstream data carries a week field
+# and can be aligned pregame without inferring the actual game starter from postgame stats.
+DEPTH_URL_TEMPLATE="https://github.com/nflverse/nflverse-data/releases/download/depth_charts/depth_charts_{season}.csv"
+INJURY_URL_TEMPLATE="https://github.com/nflverse/nflverse-data/releases/download/injuries/injuries_{season}.csv"
+QB_AVAIL_FEATURES=[
+    "home_qb_out","away_qb_out","qb_out_diff",
+    "home_qb_questionable","away_qb_questionable","qb_questionable_diff",
+    "home_qb_practice_dnp","away_qb_practice_dnp","qb_practice_dnp_diff",
+    "home_qb_practice_limited","away_qb_practice_limited","qb_practice_limited_diff"
+]
+QB_AVAIL_PROB_FEATURES=EPA_CORE_FEATURES+QB_AVAIL_FEATURES
+
+@lru_cache(maxsize=1)
+def load_qb_availability_history(start_season=2022,end_season=2024):
+    """Official weekly QB1 depth-chart identity joined to that week's injury/practice report."""
+    rows=[]
+    for season in range(start_season,end_season+1):
+        try:
+            dc=pd.read_csv(DEPTH_URL_TEMPLATE.format(season=season))
+            inj=pd.read_csv(INJURY_URL_TEMPLATE.format(season=season))
+        except Exception:
+            continue
+        if dc.empty or not {"season","week"}.issubset(dc.columns): continue
+        team_col="club_code" if "club_code" in dc.columns else "team" if "team" in dc.columns else None
+        if team_col is None: continue
+        # Legacy nflverse depth charts: QB rows + depth_team 1 represent the listed QB1.
+        q=dc.copy()
+        if "position" in q.columns: q=q[q.position.astype(str).str.upper().eq("QB")]
+        elif "depth_position" in q.columns: q=q[q.depth_position.astype(str).str.upper().str.contains("QB",na=False)]
+        if "depth_team" in q.columns:
+            dep=pd.to_numeric(q.depth_team,errors="coerce")
+            if dep.notna().any(): q=q[dep.eq(dep.groupby([q.season,q.week,q[team_col]]).transform("min"))]
+        id_col="gsis_id" if "gsis_id" in q.columns and "gsis_id" in inj.columns else None
+        name_col="full_name" if "full_name" in q.columns and "full_name" in inj.columns else None
+        keep=["season","week",team_col]+([id_col] if id_col else [])+([name_col] if name_col else [])
+        q=q[keep].drop_duplicates(["season","week",team_col],keep="first").rename(columns={team_col:"team"})
+        ii=inj.copy()
+        if "position" in ii.columns: ii=ii[ii.position.astype(str).str.upper().eq("QB")]
+        join=["season","week"]
+        if id_col: join.append(id_col)
+        elif name_col: join.append(name_col)
+        else: continue
+        cols=join+[c for c in ["team","report_status","practice_status","date_modified"] if c in ii.columns]
+        ii=ii[cols].copy()
+        if "date_modified" in ii.columns:
+            ii["date_modified"]=pd.to_datetime(ii.date_modified,errors="coerce",utc=True)
+            ii=ii.sort_values("date_modified").drop_duplicates(join,keep="last")
+        else: ii=ii.drop_duplicates(join,keep="last")
+        z=q.merge(ii,on=join,how="left",suffixes=("","_inj"))
+        rs=z.get("report_status",pd.Series("",index=z.index)).fillna("").astype(str).str.lower()
+        ps=z.get("practice_status",pd.Series("",index=z.index)).fillna("").astype(str).str.lower()
+        z["qb_out"]=rs.str.contains(r"out|doubtful",regex=True).astype(float)
+        z["qb_questionable"]=rs.str.contains("question",regex=False).astype(float)
+        z["qb_practice_dnp"]=ps.str.contains(r"did not|dnp|not particip",regex=True).astype(float)
+        z["qb_practice_limited"]=ps.str.contains("limit",regex=False).astype(float)
+        rows.append(z[["season","week","team","qb_out","qb_questionable","qb_practice_dnp","qb_practice_limited"]])
+    return pd.concat(rows,ignore_index=True) if rows else pd.DataFrame()
+
+def add_qb_availability_features(feature_frame, availability):
+    f=feature_frame.copy()
+    if availability is None or availability.empty:
+        for c in QB_AVAIL_FEATURES:f[c]=np.nan
+        return f
+    metrics=["qb_out","qb_questionable","qb_practice_dnp","qb_practice_limited"]
+    h=availability.rename(columns={"team":"home_team",**{m:"home_"+m for m in metrics}})
+    a=availability.rename(columns={"team":"away_team",**{m:"away_"+m for m in metrics}})
+    f=f.merge(h,on=["season","week","home_team"],how="left").merge(a,on=["season","week","away_team"],how="left")
+    for m in metrics:
+        # No report on the listed QB1 is treated as healthy/no flag, not missing.
+        f["home_"+m]=f["home_"+m].fillna(0.0); f["away_"+m]=f["away_"+m].fillna(0.0)
+        f[m+"_diff"]=f["home_"+m]-f["away_"+m]
+    return f
+
+def v15_qb_availability_backtest(games, availability, first_test_season=2022, last_test_season=2024):
+    """Game Engine 1.0 vs QB availability challenger on identical 2022-24 historical games."""
+    f=add_qb_availability_features(efficiency_pregame_features(games),availability)
+    done=f.dropna(subset=["target_margin","target_total"]).sort_values(["gameday","gametime"],na_position="last")
+    test=done[(done.season>=first_test_season)&(done.season<=last_test_season)&(done.home_games_prior>=2)&(done.away_games_prior>=2)]
+    rows=[]
+    for (season,week),te in test.groupby(["season","week"],sort=True):
+        cutoff=te.gameday.min()
+        tr=done[(done.gameday<cutoff)&(done.season<=last_test_season)&(done.home_games_prior>=2)&(done.away_games_prior>=2)]
+        # Availability model needs historical rows from the validated availability era.
+        tr=tr[tr.season>=first_test_season]
+        if len(tr)<250: continue
+        actual=(te.target_margin>0).astype(float).to_numpy()
+        for name,features in [("Game Engine 1.0",EPA_CORE_FEATURES),("QB Availability Challenger",QB_AVAIL_PROB_FEATURES)]:
+            wm=_linear_classifier(); wm.fit(tr[features],(tr.target_margin>0).astype(int)); wp=wm.predict_proba(te[features])[:,1]
+            for i,(_,r) in enumerate(te.iterrows()):
+                rows.append({"model":name,"season":int(season),"week":int(week),"actual_win":actual[i],"win_prob":float(wp[i]),
+                             "winner_correct":bool((wp[i]>=.5)==bool(actual[i]))})
+    return pd.DataFrame(rows)
+
+def v15_qb_availability_summary(x):
+    if x.empty:return pd.DataFrame()
+    y=x.copy(); y["brier"]=(y.win_prob-y.actual_win)**2
+    return y.groupby("model").agg(Games=("winner_correct","size"),Winner_Accuracy=("winner_correct","mean"),Brier=("brier","mean")).reset_index()
+
+def v15_qb_availability_yearly(x):
+    if x.empty:return pd.DataFrame()
+    y=x.copy(); y["brier"]=(y.win_prob-y.actual_win)**2
+    return y.groupby(["season","model"]).agg(Games=("winner_correct","size"),Winner_Accuracy=("winner_correct","mean"),Brier=("brier","mean")).reset_index()
+
+def v15_qb_availability_bootstrap(x,n_boot=4000,seed=51):
+    if x.empty:return pd.DataFrame()
+    b=x[x.model=="Game Engine 1.0"].reset_index(drop=True); c=x[x.model=="QB Availability Challenger"].reset_index(drop=True)
+    n=min(len(b),len(c));
+    if n==0:return pd.DataFrame()
+    b=b.iloc[:n]; c=c.iloc[:n]
+    da=c.winner_correct.astype(float).to_numpy()-b.winner_correct.astype(float).to_numpy()
+    db=(c.win_prob-c.actual_win).pow(2).to_numpy()-(b.win_prob-b.actual_win).pow(2).to_numpy()
+    rng=np.random.default_rng(seed); idx=rng.integers(0,n,size=(n_boot,n)); aa=da[idx].mean(1); bb=db[idx].mean(1)
+    return pd.DataFrame([
+        {"Metric":"Winner accuracy","Delta":float(da.mean()),"95% CI low":float(np.quantile(aa,.025)),"95% CI high":float(np.quantile(aa,.975)),"Clear improvement":bool(np.quantile(aa,.025)>0)},
+        {"Metric":"Brier","Delta":float(db.mean()),"95% CI low":float(np.quantile(bb,.025)),"95% CI high":float(np.quantile(bb,.975)),"Clear improvement":bool(np.quantile(bb,.975)<0)}])
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -961,7 +1079,7 @@ def model(_g): return NFLEdgeModel().fit(_g)
 
 g=games(); m=model(g); f=m.feature_df
 st.title("🏈 NFL EDGE")
-st.markdown('<div class="small">V1.4 • Football Intelligence Lab • Game Engine 1.0 protected</div>',unsafe_allow_html=True)
+st.markdown('<div class="small">V1.5 • Football Intelligence Lab • Game Engine 1.0 protected</div>',unsafe_allow_html=True)
 
 page=st.radio("Navigation",["🏈 GAMES","📊 PROPS","🏆 FANTASY","🔬 SIMULATOR","📈 MODEL RECORD"],horizontal=True,label_visibility="collapsed")
 
@@ -1331,5 +1449,38 @@ elif page=="📈 MODEL RECORD":
                 st.warning("QB QUALITY GATE: HOLD — Game Engine 1.0 stays protected. We learn from the result without forcing the feature into production.")
     st.info("Research queue after QB quality: true QB availability/injuries → offensive line → opponent adjustment → offseason carryover → travel/rest → weather. Each must earn promotion independently.")
 
+    st.divider()
+    st.subheader("🚑 v1.5 Football Intelligence — QB Availability")
+    st.write("Tests whether official pregame QB1 depth-chart + injury/practice status adds signal beyond Game Engine 1.0.")
+    st.caption("Validation is intentionally restricted to 2022–2024, where nflverse supplies week-aligned historical depth charts and official injury reports. No actual-game starter or postgame QB production is used to infer availability.")
+    if st.button("Run v1.5 QB Availability Challenge",type="primary"):
+        with st.spinner("Loading official historical depth charts/injury reports and running paired walk-forward validation..."):
+            av=load_qb_availability_history(2022,2024)
+            qa=v15_qb_availability_backtest(g,av,2022,2024)
+        if av.empty:
+            st.error("Historical availability feeds could not be loaded. Game Engine 1.0 remains unchanged.")
+        elif qa.empty:
+            st.error("QB availability validation could not be produced. Game Engine 1.0 remains unchanged.")
+        else:
+            st.caption(f"Official QB1 availability rows loaded: {len(av):,}")
+            sm=v15_qb_availability_summary(qa); show=sm.copy(); show["Winner Accuracy"]=show.Winner_Accuracy.map(lambda x:f"{x:.1%}")
+            st.dataframe(show[["model","Games","Winner Accuracy","Brier"]].round(4),use_container_width=True,hide_index=True)
+            st.subheader("Year-by-year availability stability")
+            yy=v15_qb_availability_yearly(qa); ys=yy.copy(); ys["Winner Accuracy"]=ys.Winner_Accuracy.map(lambda x:f"{x:.1%}")
+            st.dataframe(ys[["season","model","Games","Winner Accuracy","Brier"]].round(4),use_container_width=True,hide_index=True)
+            st.subheader("Paired bootstrap vs Game Engine 1.0")
+            bt=v15_qb_availability_bootstrap(qa); st.dataframe(bt.round(4),use_container_width=True,hide_index=True)
+            base=sm[sm.model=="Game Engine 1.0"].iloc[0]; chal=sm[sm.model=="QB Availability Challenger"].iloc[0]
+            st.markdown("### Availability layer delta")
+            st.write(f"Winner accuracy: **{(chal.Winner_Accuracy-base.Winner_Accuracy):+.2%}**")
+            st.write(f"Brier: **{(chal.Brier-base.Brier):+.4f}**")
+            clear=bt[bt["Clear improvement"]]
+            if chal.Brier < base.Brier and chal.Winner_Accuracy >= base.Winner_Accuracy:
+                if len(clear): st.success("QB AVAILABILITY GATE: STRONG PASS — official pregame availability improves the profile and clears a paired 95% bootstrap bar.")
+                else: st.info("QB AVAILABILITY GATE: PROMISING — aggregate profile improves, but certainty is not strong enough for automatic production promotion.")
+            else:
+                st.warning("QB AVAILABILITY GATE: HOLD — Game Engine 1.0 remains protected.")
+    st.info("v1.5 research rule: availability must be knowable before kickoff. Historical actual starters are never reverse-engineered from postgame stats. Next layers: offensive line → skill-position injuries → opponent adjustment → rest/travel → weather.")
+
 st.divider()
-st.caption("NFL Edge v1.4 • Probabilistic research software. A projection is not a guarantee, and PASS is a valid model decision.")
+st.caption("NFL Edge v1.5 • Probabilistic research software. A projection is not a guarantee, and PASS is a valid model decision.")
