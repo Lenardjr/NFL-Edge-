@@ -1,5 +1,5 @@
 from __future__ import annotations
-# NFL Edge v1.7 — standalone Streamlit app; Game Engine 1.0 protected
+# NFL Edge v1.8 — standalone Streamlit app; Game Engine 1.0 protected
 # Data source attribution: nflverse (CC-BY 4.0 where applicable).
 
 import math
@@ -1250,6 +1250,102 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
+
+# ---------- v1.8 Football Intelligence: Opponent Adjustment ----------
+# Tests whether EPA becomes more informative after adjusting each historical
+# performance for the quality of the opponent known BEFORE that game.
+# No current/future opponent results are used to construct these ratings.
+OPP_ADJ_FEATURES=[
+    "home_opp_adj_off_epa","away_opp_adj_off_epa",
+    "home_opp_adj_def_epa","away_opp_adj_def_epa",
+    "opp_adj_off_diff","opp_adj_def_diff"
+]
+OPP_ADJ_PROB_FEATURES=EPA_CORE_FEATURES+OPP_ADJ_FEATURES
+
+def opponent_adjusted_pregame_features(games,window=6):
+    base=efficiency_pregame_features(games).copy()
+    # Reuse game-level PBP efficiency to update ratings only AFTER each game row
+    off_parts=[]; def_parts=[]
+    for season in sorted(base.season.dropna().astype(int).unique()):
+        try:
+            o,d=load_efficiency_games(season); off_parts.append(o); def_parts.append(d)
+        except Exception:
+            continue
+    if not off_parts:
+        for c in OPP_ADJ_FEATURES: base[c]=0.0
+        return base
+    off=pd.concat(off_parts,ignore_index=True); de=pd.concat(def_parts,ignore_index=True)
+    raw_off={}; raw_def={}; adj_off={}; adj_def={}; rows=[]
+    def rav(store,team):
+        v=store.get(team,[]); return float(np.mean(v[-window:])) if v else 0.0
+    for _,g in base.sort_values(["gameday","gametime"],na_position="last").iterrows():
+        h,a=g.home_team,g.away_team; r=g.to_dict()
+        r["home_opp_adj_off_epa"]=rav(adj_off,h); r["away_opp_adj_off_epa"]=rav(adj_off,a)
+        r["home_opp_adj_def_epa"]=rav(adj_def,h); r["away_opp_adj_def_epa"]=rav(adj_def,a)
+        r["opp_adj_off_diff"]=r["home_opp_adj_off_epa"]-r["away_opp_adj_off_epa"]
+        # Lower defensive EPA allowed is better, so away-home gives positive home defensive edge.
+        r["opp_adj_def_diff"]=r["away_opp_adj_def_epa"]-r["home_opp_adj_def_epa"]
+        rows.append(r)
+        gid=g.get("game_id")
+        if pd.isna(gid): continue
+        oo=off[off.game_id==gid]; dd=de[de.game_id==gid]
+        # Opponent baselines below are strictly pregame ratings.
+        pre_off_h,pre_off_a=rav(raw_off,h),rav(raw_off,a)
+        pre_def_h,pre_def_a=rav(raw_def,h),rav(raw_def,a)
+        vals={}
+        for team,opp,opp_def,opp_off in [(h,a,pre_def_a,pre_off_a),(a,h,pre_def_h,pre_off_h)]:
+            xo=oo[oo.posteam==team]; xd=dd[dd.defteam==team]
+            if xo.empty or xd.empty: continue
+            oe=float(xo.iloc[0].off_epa); da=float(xd.iloc[0].def_epa_allowed)
+            if not np.isfinite(oe) or not np.isfinite(da): continue
+            # Offense gets credit for beating a strong (low EPA allowed) defense.
+            # Defense gets credit for holding a strong (high EPA) offense below expectation.
+            adj_o=oe-opp_def
+            adj_d=da-opp_off
+            vals[team]=(oe,da,adj_o,adj_d)
+        for team,(oe,da,ao,ad) in vals.items():
+            raw_off.setdefault(team,[]).append(oe); raw_def.setdefault(team,[]).append(da)
+            adj_off.setdefault(team,[]).append(ao); adj_def.setdefault(team,[]).append(ad)
+    return pd.DataFrame(rows)
+
+def v18_opponent_backtest(games,first_test_season=2022,last_test_season=2024):
+    f=opponent_adjusted_pregame_features(games)
+    done=f.dropna(subset=["target_margin","target_total"]).sort_values(["gameday","gametime"],na_position="last")
+    test=done[(done.season>=first_test_season)&(done.season<=last_test_season)&(done.home_games_prior>=2)&(done.away_games_prior>=2)]
+    rows=[]
+    for (season,week),te in test.groupby(["season","week"],sort=True):
+        cutoff=te.gameday.min()
+        tr=done[(done.gameday<cutoff)&(done.season>=first_test_season)&(done.season<=last_test_season)&(done.home_games_prior>=2)&(done.away_games_prior>=2)]
+        if len(tr)<250: continue
+        actual=(te.target_margin>0).astype(float).to_numpy()
+        for name,features in [("Game Engine 1.0",EPA_CORE_FEATURES),("Opponent-Adjusted Challenger",OPP_ADJ_PROB_FEATURES)]:
+            wm=_linear_classifier(); wm.fit(tr[features],(tr.target_margin>0).astype(int)); wp=wm.predict_proba(te[features])[:,1]
+            for i,(_,r) in enumerate(te.iterrows()):
+                rows.append({"model":name,"season":int(season),"week":int(week),"actual_win":actual[i],"win_prob":float(wp[i]),"winner_correct":bool((wp[i]>=.5)==bool(actual[i]))})
+    return pd.DataFrame(rows)
+
+def v18_opponent_summary(x):
+    if x.empty:return pd.DataFrame()
+    y=x.copy(); y["brier"]=(y.win_prob-y.actual_win)**2
+    return y.groupby("model").agg(Games=("winner_correct","size"),Winner_Accuracy=("winner_correct","mean"),Brier=("brier","mean")).reset_index()
+
+def v18_opponent_yearly(x):
+    if x.empty:return pd.DataFrame()
+    y=x.copy(); y["brier"]=(y.win_prob-y.actual_win)**2
+    return y.groupby(["season","model"]).agg(Games=("winner_correct","size"),Winner_Accuracy=("winner_correct","mean"),Brier=("brier","mean")).reset_index()
+
+def v18_opponent_bootstrap(x,n_boot=4000,seed=81):
+    if x.empty:return pd.DataFrame()
+    b=x[x.model=="Game Engine 1.0"].reset_index(drop=True); c=x[x.model=="Opponent-Adjusted Challenger"].reset_index(drop=True); n=min(len(b),len(c))
+    if n==0:return pd.DataFrame()
+    b=b.iloc[:n]; c=c.iloc[:n]
+    da=c.winner_correct.astype(float).to_numpy()-b.winner_correct.astype(float).to_numpy()
+    db=(c.win_prob-c.actual_win).pow(2).to_numpy()-(b.win_prob-b.actual_win).pow(2).to_numpy()
+    rng=np.random.default_rng(seed); idx=rng.integers(0,n,size=(n_boot,n)); aa=da[idx].mean(1); bb=db[idx].mean(1)
+    return pd.DataFrame([
+        {"Metric":"Winner accuracy","Delta":float(da.mean()),"95% CI low":float(np.quantile(aa,.025)),"95% CI high":float(np.quantile(aa,.975)),"Clear improvement":bool(np.quantile(aa,.025)>0)},
+        {"Metric":"Brier","Delta":float(db.mean()),"95% CI low":float(np.quantile(bb,.025)),"95% CI high":float(np.quantile(bb,.975)),"Clear improvement":bool(np.quantile(bb,.975)<0)}])
+
 st.set_page_config(page_title="NFL Edge",page_icon="🏈",layout="wide",initial_sidebar_state="collapsed")
 GAMES_URL="https://raw.githubusercontent.com/nflverse/nfldata/master/data/games.csv"
 
@@ -1736,5 +1832,32 @@ elif page=="📈 MODEL RECORD":
             else: st.warning("SKILL AVAILABILITY GATE: HOLD — Game Engine 1.0 remains protected.")
     st.info("Research queue after v1.7: opponent adjustment → rest/travel → weather. QB Availability remains the leading promising shadow candidate; OL Availability remains HOLD.")
 
+
+    st.divider()
+    st.subheader("🧭 v1.8 Football Intelligence — Opponent Adjustment")
+    st.write("Tests whether EPA performance becomes more predictive after accounting for the quality of opponents already faced.")
+    st.caption("Leakage guard: every opponent-strength adjustment is built only from games completed before the game being predicted. Current-game and future results never enter the rating. Validation remains 2022–2024 for direct comparison with v1.5–v1.7.")
+    if st.button("Run v1.8 Opponent Adjustment Challenge",type="primary"):
+        with st.spinner("Building leakage-safe opponent-adjusted EPA ratings and running paired walk-forward validation..."):
+            ax=v18_opponent_backtest(g,2022,2024)
+        if ax.empty: st.error("Opponent-adjusted validation could not be produced. Game Engine 1.0 remains unchanged.")
+        else:
+            sm=v18_opponent_summary(ax); show=sm.copy(); show["Winner Accuracy"]=show.Winner_Accuracy.map(lambda x:f"{x:.1%}")
+            st.dataframe(show[["model","Games","Winner Accuracy","Brier"]].round(4),use_container_width=True,hide_index=True)
+            st.subheader("Year-by-year opponent-adjustment stability")
+            yy=v18_opponent_yearly(ax); ys=yy.copy(); ys["Winner Accuracy"]=ys.Winner_Accuracy.map(lambda x:f"{x:.1%}")
+            st.dataframe(ys[["season","model","Games","Winner Accuracy","Brier"]].round(4),use_container_width=True,hide_index=True)
+            st.subheader("Paired bootstrap vs Game Engine 1.0")
+            bt=v18_opponent_bootstrap(ax); st.dataframe(bt.round(4),use_container_width=True,hide_index=True)
+            base=sm[sm.model=="Game Engine 1.0"].iloc[0]; chal=sm[sm.model=="Opponent-Adjusted Challenger"].iloc[0]
+            st.markdown("### Opponent-adjustment layer delta")
+            st.write(f"Winner accuracy: **{(chal.Winner_Accuracy-base.Winner_Accuracy):+.2%}**"); st.write(f"Brier: **{(chal.Brier-base.Brier):+.4f}**")
+            clear=bt[bt["Clear improvement"]]
+            if chal.Brier < base.Brier and chal.Winner_Accuracy >= base.Winner_Accuracy:
+                if len(clear): st.success("OPPONENT ADJUSTMENT GATE: STRONG PASS — opponent-adjusted EPA improves the profile and clears a paired 95% bootstrap bar.")
+                else: st.info("OPPONENT ADJUSTMENT GATE: PROMISING — aggregate profile improves, but certainty is not strong enough for automatic production promotion.")
+            else: st.warning("OPPONENT ADJUSTMENT GATE: HOLD — Game Engine 1.0 remains protected.")
+    st.info("Research queue after v1.8: rest/travel → weather. QB Availability remains the leading promising shadow candidate; OL and skill-position availability remain HOLD.")
+
 st.divider()
-st.caption("NFL Edge v1.7 • Probabilistic research software. A projection is not a guarantee, and PASS is a valid model decision.")
+st.caption("NFL Edge v1.8 • Probabilistic research software. A projection is not a guarantee, and PASS is a valid model decision.")
