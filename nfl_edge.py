@@ -1,5 +1,5 @@
 from __future__ import annotations
-# NFL Edge v1.6 — standalone Streamlit app; Game Engine 1.0 protected
+# NFL Edge v1.7 — standalone Streamlit app; Game Engine 1.0 protected
 # Data source attribution: nflverse (CC-BY 4.0 where applicable).
 
 import math
@@ -1149,6 +1149,103 @@ def v16_ol_bootstrap(x,n_boot=4000,seed=61):
         {"Metric":"Winner accuracy","Delta":float(da.mean()),"95% CI low":float(np.quantile(aa,.025)),"95% CI high":float(np.quantile(aa,.975)),"Clear improvement":bool(np.quantile(aa,.025)>0)},
         {"Metric":"Brier","Delta":float(db.mean()),"95% CI low":float(np.quantile(bb,.025)),"95% CI high":float(np.quantile(bb,.975)),"Clear improvement":bool(np.quantile(bb,.975)<0)}])
 
+
+# ---------- v1.7 Football Intelligence: Skill-Position Availability ----------
+# Separately tests pregame WR/RB/TE injury/practice burden. No postgame snaps or
+# same-game production are used. Game Engine 1.0 remains the protected baseline.
+SKILL_POSITIONS={"WR","RB","FB","TE"}
+SKILL_AVAIL_FEATURES=[
+    "home_skill_out","away_skill_out","skill_out_diff",
+    "home_skill_questionable","away_skill_questionable","skill_questionable_diff",
+    "home_skill_dnp","away_skill_dnp","skill_dnp_diff",
+    "home_skill_limited","away_skill_limited","skill_limited_diff",
+    "home_skill_burden","away_skill_burden","skill_burden_diff"
+]
+SKILL_AVAIL_PROB_FEATURES=EPA_CORE_FEATURES+SKILL_AVAIL_FEATURES
+
+@lru_cache(maxsize=1)
+def load_skill_availability_history(start_season=2022,end_season=2024):
+    rows=[]
+    for season in range(start_season,end_season+1):
+        try: inj=pd.read_csv(INJURY_URL_TEMPLATE.format(season=season))
+        except Exception: continue
+        if inj.empty or not {"season","week"}.issubset(inj.columns): continue
+        team_col="team" if "team" in inj.columns else "club_code" if "club_code" in inj.columns else None
+        if team_col is None or "position" not in inj.columns: continue
+        x=inj.copy(); x["position"]=x.position.fillna("").astype(str).str.upper().str.strip()
+        x=x[x.position.isin(SKILL_POSITIONS)]
+        if x.empty: continue
+        idcol="gsis_id" if "gsis_id" in x.columns else "full_name" if "full_name" in x.columns else None
+        if idcol is None: continue
+        keys=["season","week",team_col,idcol]
+        if "date_modified" in x.columns:
+            x["date_modified"]=pd.to_datetime(x.date_modified,errors="coerce",utc=True)
+            x=x.sort_values("date_modified").drop_duplicates(keys,keep="last")
+        else: x=x.drop_duplicates(keys,keep="last")
+        rs=x.get("report_status",pd.Series("",index=x.index)).fillna("").astype(str).str.lower()
+        ps=x.get("practice_status",pd.Series("",index=x.index)).fillna("").astype(str).str.lower()
+        x["skill_out_flag"]=rs.str.contains(r"out|doubtful",regex=True).astype(float)
+        x["skill_questionable_flag"]=rs.str.contains("question",regex=False).astype(float)
+        x["skill_dnp_flag"]=ps.str.contains(r"did not|dnp|not particip",regex=True).astype(float)
+        x["skill_limited_flag"]=ps.str.contains("limit",regex=False).astype(float)
+        g=x.groupby(["season","week",team_col],as_index=False).agg(
+            skill_out=("skill_out_flag","sum"),skill_questionable=("skill_questionable_flag","sum"),
+            skill_dnp=("skill_dnp_flag","sum"),skill_limited=("skill_limited_flag","sum"))
+        g=g.rename(columns={team_col:"team"})
+        g["skill_burden"]=g.skill_out+0.35*g.skill_questionable+0.20*g.skill_dnp+0.10*g.skill_limited
+        rows.append(g)
+    return pd.concat(rows,ignore_index=True) if rows else pd.DataFrame()
+
+def add_skill_availability_features(feature_frame,skill):
+    f=feature_frame.copy(); metrics=["skill_out","skill_questionable","skill_dnp","skill_limited","skill_burden"]
+    if skill is None or skill.empty:
+        for c in SKILL_AVAIL_FEATURES: f[c]=np.nan
+        return f
+    h=skill.rename(columns={"team":"home_team",**{m:"home_"+m for m in metrics}})
+    a=skill.rename(columns={"team":"away_team",**{m:"away_"+m for m in metrics}})
+    f=f.merge(h,on=["season","week","home_team"],how="left").merge(a,on=["season","week","away_team"],how="left")
+    for m in metrics:
+        f["home_"+m]=f["home_"+m].fillna(0.0); f["away_"+m]=f["away_"+m].fillna(0.0)
+        f[m+"_diff"]=f["home_"+m]-f["away_"+m]
+    return f
+
+def v17_skill_backtest(games,skill,first_test_season=2022,last_test_season=2024):
+    f=add_skill_availability_features(efficiency_pregame_features(games),skill)
+    done=f.dropna(subset=["target_margin","target_total"]).sort_values(["gameday","gametime"],na_position="last")
+    test=done[(done.season>=first_test_season)&(done.season<=last_test_season)&(done.home_games_prior>=2)&(done.away_games_prior>=2)]
+    rows=[]
+    for (season,week),te in test.groupby(["season","week"],sort=True):
+        cutoff=te.gameday.min(); tr=done[(done.gameday<cutoff)&(done.season>=first_test_season)&(done.season<=last_test_season)&(done.home_games_prior>=2)&(done.away_games_prior>=2)]
+        if len(tr)<250: continue
+        actual=(te.target_margin>0).astype(float).to_numpy()
+        for name,features in [("Game Engine 1.0",EPA_CORE_FEATURES),("Skill Availability Challenger",SKILL_AVAIL_PROB_FEATURES)]:
+            wm=_linear_classifier(); wm.fit(tr[features],(tr.target_margin>0).astype(int)); wp=wm.predict_proba(te[features])[:,1]
+            for i,(_,r) in enumerate(te.iterrows()):
+                rows.append({"model":name,"season":int(season),"week":int(week),"actual_win":actual[i],"win_prob":float(wp[i]),"winner_correct":bool((wp[i]>=.5)==bool(actual[i]))})
+    return pd.DataFrame(rows)
+
+def v17_skill_summary(x):
+    if x.empty:return pd.DataFrame()
+    y=x.copy(); y["brier"]=(y.win_prob-y.actual_win)**2
+    return y.groupby("model").agg(Games=("winner_correct","size"),Winner_Accuracy=("winner_correct","mean"),Brier=("brier","mean")).reset_index()
+
+def v17_skill_yearly(x):
+    if x.empty:return pd.DataFrame()
+    y=x.copy(); y["brier"]=(y.win_prob-y.actual_win)**2
+    return y.groupby(["season","model"]).agg(Games=("winner_correct","size"),Winner_Accuracy=("winner_correct","mean"),Brier=("brier","mean")).reset_index()
+
+def v17_skill_bootstrap(x,n_boot=4000,seed=71):
+    if x.empty:return pd.DataFrame()
+    b=x[x.model=="Game Engine 1.0"].reset_index(drop=True); c=x[x.model=="Skill Availability Challenger"].reset_index(drop=True); n=min(len(b),len(c))
+    if n==0:return pd.DataFrame()
+    b=b.iloc[:n]; c=c.iloc[:n]
+    da=c.winner_correct.astype(float).to_numpy()-b.winner_correct.astype(float).to_numpy()
+    db=(c.win_prob-c.actual_win).pow(2).to_numpy()-(b.win_prob-b.actual_win).pow(2).to_numpy()
+    rng=np.random.default_rng(seed); idx=rng.integers(0,n,size=(n_boot,n)); aa=da[idx].mean(1); bb=db[idx].mean(1)
+    return pd.DataFrame([
+        {"Metric":"Winner accuracy","Delta":float(da.mean()),"95% CI low":float(np.quantile(aa,.025)),"95% CI high":float(np.quantile(aa,.975)),"Clear improvement":bool(np.quantile(aa,.025)>0)},
+        {"Metric":"Brier","Delta":float(db.mean()),"95% CI low":float(np.quantile(bb,.025)),"95% CI high":float(np.quantile(bb,.975)),"Clear improvement":bool(np.quantile(bb,.975)<0)}])
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -1610,5 +1707,34 @@ elif page=="📈 MODEL RECORD":
             else: st.warning("OL AVAILABILITY GATE: HOLD — Game Engine 1.0 remains protected.")
     st.info("Research queue after v1.6: skill-position injuries → opponent adjustment → rest/travel → weather. QB Availability remains a promising shadow candidate, not a production feature.")
 
+
+    st.divider()
+    st.subheader("🎯 v1.7 Football Intelligence — Skill-Position Availability")
+    st.write("Tests whether official pregame WR/RB/TE injury and practice burden adds independent signal beyond Game Engine 1.0.")
+    st.caption("Uses official weekly injury/practice reports only; no postgame snaps, starter inference, or same-game production. Validation remains 2022–2024 for an apples-to-apples comparison with v1.5 and v1.6.")
+    if st.button("Run v1.7 Skill-Position Challenge",type="primary"):
+        with st.spinner("Loading official WR/RB/TE injury reports and running paired walk-forward validation..."):
+            sk=load_skill_availability_history(2022,2024); sx=v17_skill_backtest(g,sk,2022,2024)
+        if sk.empty: st.error("Historical skill-position availability feed could not be loaded. Game Engine 1.0 remains unchanged.")
+        elif sx.empty: st.error("Skill-position validation could not be produced. Game Engine 1.0 remains unchanged.")
+        else:
+            st.caption(f"Official team-week skill-position availability rows loaded: {len(sk):,}")
+            sm=v17_skill_summary(sx); show=sm.copy(); show["Winner Accuracy"]=show.Winner_Accuracy.map(lambda x:f"{x:.1%}")
+            st.dataframe(show[["model","Games","Winner Accuracy","Brier"]].round(4),use_container_width=True,hide_index=True)
+            st.subheader("Year-by-year skill-position stability")
+            yy=v17_skill_yearly(sx); ys=yy.copy(); ys["Winner Accuracy"]=ys.Winner_Accuracy.map(lambda x:f"{x:.1%}")
+            st.dataframe(ys[["season","model","Games","Winner Accuracy","Brier"]].round(4),use_container_width=True,hide_index=True)
+            st.subheader("Paired bootstrap vs Game Engine 1.0")
+            bt=v17_skill_bootstrap(sx); st.dataframe(bt.round(4),use_container_width=True,hide_index=True)
+            base=sm[sm.model=="Game Engine 1.0"].iloc[0]; chal=sm[sm.model=="Skill Availability Challenger"].iloc[0]
+            st.markdown("### Skill-position layer delta")
+            st.write(f"Winner accuracy: **{(chal.Winner_Accuracy-base.Winner_Accuracy):+.2%}**"); st.write(f"Brier: **{(chal.Brier-base.Brier):+.4f}**")
+            clear=bt[bt["Clear improvement"]]
+            if chal.Brier < base.Brier and chal.Winner_Accuracy >= base.Winner_Accuracy:
+                if len(clear): st.success("SKILL AVAILABILITY GATE: STRONG PASS — the pregame skill-position layer improves the profile and clears a paired 95% bootstrap bar.")
+                else: st.info("SKILL AVAILABILITY GATE: PROMISING — aggregate profile improves, but certainty is not strong enough for automatic production promotion.")
+            else: st.warning("SKILL AVAILABILITY GATE: HOLD — Game Engine 1.0 remains protected.")
+    st.info("Research queue after v1.7: opponent adjustment → rest/travel → weather. QB Availability remains the leading promising shadow candidate; OL Availability remains HOLD.")
+
 st.divider()
-st.caption("NFL Edge v1.6 • Probabilistic research software. A projection is not a guarantee, and PASS is a valid model decision.")
+st.caption("NFL Edge v1.7 • Probabilistic research software. A projection is not a guarantee, and PASS is a valid model decision.")
