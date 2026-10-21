@@ -1,5 +1,5 @@
 from __future__ import annotations
-# NFL Edge v1.8 — standalone Streamlit app; Game Engine 1.0 protected
+# NFL Edge v1.9 — standalone Streamlit app; Game Engine 1.0 protected
 # Data source attribution: nflverse (CC-BY 4.0 where applicable).
 
 import math
@@ -1251,6 +1251,76 @@ import pandas as pd
 import numpy as np
 
 
+
+# ---------- v1.9 2026 Live Holdout Audit ----------
+def v19_2026_holdout(games, start_week=1, end_week=6):
+    """Replay 2026 weeks 1-end_week using only games completed before each kickoff.
+
+    Unlike the long-run research backtests, early-season games are intentionally retained.
+    Their rolling features contain only what was actually knowable at the time (with the
+    model's preseason/default priors where no current-season games had yet been played).
+    Training remains historical and leakage-safe.
+    """
+    f=efficiency_pregame_features(games)
+    done=f.dropna(subset=["target_margin","target_total"]).sort_values(["gameday","gametime"],na_position="last")
+    te_all=done[(done.season==2026)&(done.week>=start_week)&(done.week<=end_week)].copy()
+    rows=[]
+    for (season,week),te in te_all.groupby(["season","week"],sort=True):
+        cutoff=te.gameday.min()
+        tr=done[(done.gameday<cutoff)&(done.home_games_prior>=2)&(done.away_games_prior>=2)].copy()
+        if len(tr)<300: continue
+        ep=_linear_classifier(); em=pipe(25); et=pipe(30)
+        ep.fit(tr[EPA_CORE_FEATURES],(tr.target_margin>0).astype(int))
+        em.fit(tr[FEATURES],tr.target_margin); et.fit(tr[PASS_FEATURES],tr.target_total)
+        wp=ep.predict_proba(te[EPA_CORE_FEATURES])[:,1]
+        pm=em.predict(te[FEATURES]); pt=et.predict(te[PASS_FEATURES])
+        for i,(_,r) in enumerate(te.iterrows()):
+            actual_home=float(r.target_margin>0)
+            spread=r.get("spread_line",np.nan); total_line=r.get("total_line",np.nan)
+            model_side="PASS"; ats_correct=np.nan; market_fav_correct=np.nan
+            if pd.notna(spread):
+                gap=float(pm[i]-float(spread))
+                if abs(gap)>1e-9: model_side="HOME" if gap>0 else "AWAY"
+                cover=float(r.target_margin-float(spread))
+                if model_side!="PASS" and abs(cover)>1e-9:
+                    ats_correct=bool(cover>0) if model_side=="HOME" else bool(cover<0)
+                if abs(float(spread))>1e-9:
+                    market_home_fav=float(spread)>0
+                    market_fav_correct=bool(actual_home) if market_home_fav else bool(1-actual_home)
+            rows.append({
+                "season":2026,"week":int(week),"gameday":r.gameday,
+                "Game":f"{r.away_team} @ {r.home_team}",
+                "home_win_prob":float(wp[i]),"pred_margin":float(pm[i]),"pred_total":float(pt[i]),
+                "actual_margin":float(r.target_margin),"actual_total":float(r.target_total),
+                "winner_correct":bool((wp[i]>=.5)==bool(actual_home)),
+                "brier":float((wp[i]-actual_home)**2),
+                "margin_abs_error":float(abs(pm[i]-r.target_margin)),
+                "total_abs_error":float(abs(pt[i]-r.target_total)),
+                "confidence":float(max(wp[i],1-wp[i])),
+                "market_spread":spread,"market_total":total_line,
+                "model_side":model_side,"ats_correct":ats_correct,"market_favorite_correct":market_fav_correct,
+                "training_games":int(len(tr))})
+    return pd.DataFrame(rows)
+
+def v19_holdout_summary(x):
+    if x.empty:return pd.DataFrame()
+    return pd.DataFrame([{
+        "Games":len(x),"Winner Accuracy":x.winner_correct.mean(),"Brier":x.brier.mean(),
+        "Margin MAE":x.margin_abs_error.mean(),"Total MAE":x.total_abs_error.mean(),
+        "ATS Accuracy":x.ats_correct.dropna().mean() if x.ats_correct.notna().any() else np.nan,
+        "Market Favorite Accuracy":x.market_favorite_correct.dropna().mean() if x.market_favorite_correct.notna().any() else np.nan}])
+
+def v19_weekly(x):
+    if x.empty:return pd.DataFrame()
+    return x.groupby("week").agg(Games=("Game","size"),Winner_Accuracy=("winner_correct","mean"),
+        Brier=("brier","mean"),Margin_MAE=("margin_abs_error","mean"),Total_MAE=("total_abs_error","mean")).reset_index()
+
+def v19_confidence(x):
+    if x.empty:return pd.DataFrame()
+    y=x.copy(); y["Confidence band"]=pd.cut(y.confidence,bins=[.5,.55,.60,.65,.70,1.00001],
+        labels=["50–55%","55–60%","60–65%","65–70%","70%+"],include_lowest=True,right=False)
+    return y.groupby("Confidence band",observed=True).agg(Games=("Game","size"),Average_Confidence=("confidence","mean"),Winner_Accuracy=("winner_correct","mean")).reset_index()
+
 # ---------- v1.8 Football Intelligence: Opponent Adjustment ----------
 # Tests whether EPA becomes more informative after adjusting each historical
 # performance for the quality of the opponent known BEFORE that game.
@@ -1859,5 +1929,41 @@ elif page=="📈 MODEL RECORD":
             else: st.warning("OPPONENT ADJUSTMENT GATE: HOLD — Game Engine 1.0 remains protected.")
     st.info("Research queue after v1.8: rest/travel → weather. QB Availability remains the leading promising shadow candidate; OL and skill-position availability remain HOLD.")
 
+    st.divider()
+    st.subheader("🧪 v1.9 — 2026 Live Holdout Audit (Weeks 1–6)")
+    st.write("Replays the first six completed weeks of 2026 exactly as a frozen Game Engine 1.0 would have seen them: each game is predicted using only information available before that kickoff.")
+    st.caption("This is a true chronological holdout audit, not a refit on Weeks 1–6. Early-season games are intentionally included, so Week 1 starts from historical/preseason priors and later weeks accumulate only prior 2026 results.")
+    if st.button("Run v1.9 2026 Weeks 1–6 Holdout Audit",type="primary"):
+        with st.spinner("Replaying 2026 Weeks 1–6 chronologically with Game Engine 1.0 frozen..."):
+            hx=v19_2026_holdout(g,1,6)
+        if hx.empty:
+            st.error("The 2026 Weeks 1–6 holdout could not be produced from the current schedule/results feed. Game Engine 1.0 remains unchanged.")
+        else:
+            sm=v19_holdout_summary(hx); show=sm.copy()
+            for c in ["Winner Accuracy","ATS Accuracy","Market Favorite Accuracy"]:
+                show[c]=show[c].map(lambda x:f"{x:.1%}" if pd.notna(x) else "—")
+            st.markdown("### If NFL Edge had been live from Week 1")
+            st.dataframe(show.round(3),use_container_width=True,hide_index=True)
+            st.subheader("Week-by-week record")
+            wk=v19_weekly(hx); ws=wk.copy(); ws["Winner Accuracy"]=ws.Winner_Accuracy.map(lambda x:f"{x:.1%}")
+            st.dataframe(ws.round(3),use_container_width=True,hide_index=True)
+            st.subheader("Confidence check")
+            cf=v19_confidence(hx); cs=cf.copy(); cs["Average Confidence"]=cs.Average_Confidence.map(lambda x:f"{x:.1%}"); cs["Winner Accuracy"]=cs.Winner_Accuracy.map(lambda x:f"{x:.1%}")
+            st.dataframe(cs[["Confidence band","Games","Average Confidence","Winner Accuracy"]],use_container_width=True,hide_index=True)
+            st.subheader("Game-by-game audit trail")
+            audit=hx[["week","gameday","Game","home_win_prob","pred_margin","actual_margin","pred_total","actual_total","winner_correct"]].copy()
+            audit["home_win_prob"]=audit.home_win_prob.map(lambda x:f"{x:.1%}")
+            st.dataframe(audit.round(1),use_container_width=True,hide_index=True)
+            acc=float(hx.winner_correct.mean()); br=float(hx.brier.mean())
+            if acc>=.64:
+                st.success(f"2026 HOLDOUT: {acc:.1%} winner accuracy across {len(hx)} games. This supports the historical signal, but six weeks is still a small sample and not a guarantee of future performance.")
+            elif acc>=.58:
+                st.info(f"2026 HOLDOUT: {acc:.1%} winner accuracy across {len(hx)} games. Useful signal, but weaker than the long-run historical profile; keep monitoring before increasing trust.")
+            else:
+                st.warning(f"2026 HOLDOUT: {acc:.1%} winner accuracy across {len(hx)} games. Investigate early-season priors/calibration before treating the engine as production-trustworthy.")
+            st.caption(f"Holdout Brier: {br:.4f}. No Weeks 1–6 outcome is allowed into its own prediction features or training set.")
+    st.info("v1.9 changes the roadmap: validate the current engine on fresh 2026 games before adding more Football Intelligence layers. Rest/travel and weather remain queued until this audit is understood.")
+
+
 st.divider()
-st.caption("NFL Edge v1.8 • Probabilistic research software. A projection is not a guarantee, and PASS is a valid model decision.")
+st.caption("NFL Edge v1.9 • 2026 live-holdout audit • Probabilistic research software. A projection is not a guarantee, and PASS is a valid model decision.")
