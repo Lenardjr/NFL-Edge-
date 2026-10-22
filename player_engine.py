@@ -6,7 +6,6 @@ and reused by future prop/fantasy backtests.
 """
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, asdict
 from typing import Iterable
 
@@ -14,6 +13,7 @@ import numpy as np
 import pandas as pd
 
 TEAM_COLUMNS = ("recent_team", "team", "team_abbr", "club_code")
+TEAM_ALIASES = {"LA": "LAR", "STL": "LAR", "SD": "LAC", "OAK": "LV"}
 
 
 def normalize_player_schema(df: pd.DataFrame) -> pd.DataFrame:
@@ -21,10 +21,28 @@ def normalize_player_schema(df: pd.DataFrame) -> pd.DataFrame:
     if "recent_team" not in d.columns:
         source = next((c for c in TEAM_COLUMNS[1:] if c in d.columns), None)
         d["recent_team"] = d[source] if source else pd.NA
+    d["recent_team"] = d["recent_team"].map(
+        lambda value: TEAM_ALIASES.get(str(value), str(value)) if pd.notna(value) else value
+    )
     for c in ("season", "week"):
         if c in d.columns:
             d[c] = pd.to_numeric(d[c], errors="coerce")
     return d
+
+
+def player_history_as_of(stats: pd.DataFrame, season: int, week: int) -> pd.DataFrame:
+    """Completed player games strictly before the requested season/week.
+
+    Prior-season games remain available, which keeps early-season projections
+    useful without leaking the target week or any future results.
+    """
+    d = normalize_player_schema(stats)
+    if d.empty or "season" not in d.columns or "week" not in d.columns:
+        return pd.DataFrame(columns=d.columns)
+    season_values = pd.to_numeric(d["season"], errors="coerce")
+    week_values = pd.to_numeric(d["week"], errors="coerce")
+    mask = (season_values < int(season)) | ((season_values == int(season)) & (week_values < int(week)))
+    return d.loc[mask].copy()
 
 
 def _weighted_mean(values: Iterable[float], decay: float = 0.82) -> float:
@@ -61,6 +79,7 @@ class PlayerProjection:
     player_id: str
     player_name: str
     team: str | None
+    position: str | None
     games_used: int
     projected_ppr: float
     floor: float
@@ -88,7 +107,6 @@ def project_player(history: pd.DataFrame, lookback: int = 8) -> PlayerProjection
     recent_avg = float(np.mean(points[-3:])) if len(points) else 0.0
     volatility = float(np.std(points, ddof=0)) if len(points) > 1 else 0.0
     trend = float(recent_avg - np.mean(points[:-3])) if len(points) > 3 else 0.0
-    # Conservative empirical interval; Monte Carlo layer can replace this later.
     floor = max(0.0, projected - 0.85 * volatility)
     ceiling = max(floor, projected + 1.15 * volatility)
     sample_score = min(1.0, len(points) / max(lookback, 1))
@@ -98,13 +116,15 @@ def project_player(history: pd.DataFrame, lookback: int = 8) -> PlayerProjection
     name = row.get("player_display_name", row.get("player_name", row.get("name", "Unknown")))
     pid = row.get("player_id", row.get("gsis_id", str(name)))
     team = row.get("recent_team")
+    position = row.get("position")
     return PlayerProjection(
         player_id=str(pid), player_name=str(name),
-        team=None if pd.isna(team) else str(team), games_used=len(points),
-        projected_ppr=round(projected, 2), floor=round(floor, 2),
-        ceiling=round(ceiling, 2), recent_avg=round(recent_avg, 2),
-        volatility=round(volatility, 2), trend=round(trend, 2),
-        confidence=round(confidence, 3),
+        team=None if pd.isna(team) else str(team),
+        position=None if pd.isna(position) else str(position),
+        games_used=len(points), projected_ppr=round(projected, 2),
+        floor=round(floor, 2), ceiling=round(ceiling, 2),
+        recent_avg=round(recent_avg, 2), volatility=round(volatility, 2),
+        trend=round(trend, 2), confidence=round(confidence, 3),
     )
 
 
@@ -123,3 +143,9 @@ def project_all_players(stats: pd.DataFrame, lookback: int = 8, min_games: int =
     if not rows:
         return pd.DataFrame()
     return pd.DataFrame(rows).sort_values(["projected_ppr", "confidence"], ascending=False).reset_index(drop=True)
+
+
+def project_all_players_as_of(stats: pd.DataFrame, season: int, week: int, lookback: int = 8, min_games: int = 3) -> pd.DataFrame:
+    """Build a board using only information available before season/week."""
+    history = player_history_as_of(stats, season=season, week=week)
+    return project_all_players(history, lookback=lookback, min_games=min_games)
