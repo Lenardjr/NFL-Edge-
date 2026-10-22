@@ -8,6 +8,9 @@ from player_validation import validate_player_feed
 from player_backtest import backtest_fantasy_projections, fantasy_backtest_summary, fantasy_backtest_by_position
 
 PLAYER_URL_TEMPLATE = "https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_{season}.csv"
+BUILD_VERSION = "v1.1.0-fantasy-only-qb-challenger"
+BACKTEST_CACHE_VERSION = "fantasy-only-v2"
+FANTASY_POSITIONS = ("QB", "RB", "WR", "TE")
 
 st.set_page_config(page_title="NFL Edge", page_icon="🏈", layout="wide", initial_sidebar_state="collapsed")
 
@@ -32,8 +35,11 @@ def load_player_stats(start_season: int, end_season: int) -> pd.DataFrame:
         return pd.DataFrame()
     return normalize_player_schema(pd.concat(frames, ignore_index=True))
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def run_backtest(stats: pd.DataFrame, season: int, week: int, lookback: int, min_games: int) -> pd.DataFrame:
+@st.cache_data(ttl=900, show_spinner=False)
+def run_backtest(stats: pd.DataFrame, season: int, week: int, lookback: int, min_games: int, cache_version: str) -> pd.DataFrame:
+    # cache_version intentionally participates in Streamlit's cache key so model
+    # changes cannot silently reuse historical results from an older deployment.
+    _ = cache_version
     end_week = min(max(int(week) - 1, 4), 18)
     start_season = max(2022, int(season) - 1)
     return backtest_fantasy_projections(
@@ -47,12 +53,13 @@ def run_backtest(stats: pd.DataFrame, season: int, week: int, lookback: int, min
     )
 
 st.title("🏈 NFL EDGE")
-st.markdown('<div class="small">Player Projection Engine v1 • Leakage-safe weekly validation build</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="small">Player Projection Engine v1 • Leakage-safe weekly validation build • <b>{BUILD_VERSION}</b></div>', unsafe_allow_html=True)
 st.info("This validation dashboard projects a selected NFL week using only games completed before that week. Game Engine 1.0 remains protected in nfl_edge.py.")
 
 current_season = 2026
 with st.sidebar:
     st.header("Projection Settings")
+    st.caption(f"Live build: {BUILD_VERSION}")
     season = st.selectbox("Season", list(range(current_season, 2019, -1)), index=0)
     week = st.slider("Project week", 1, 22, 8)
     lookback = st.slider("Recent games used", 3, 12, 8)
@@ -129,33 +136,38 @@ else:
 
 st.divider()
 st.subheader("Historical Accuracy Gate")
-st.caption("Walk-forward validation replays completed weeks chronologically. Each historical projection only sees information that existed before its target week.")
+st.caption(f"Build {BUILD_VERSION} • Fantasy-only validation: QB / RB / WR / TE. Walk-forward projections only see information available before each target week.")
 if week < 5:
     st.info("Historical accuracy becomes available from Week 5 onward so at least one in-season validation week exists.")
 else:
-    if st.button("Run historical accuracy check", type="secondary"):
-        with st.spinner("Replaying historical player projections without future-week leakage..."):
-            results = run_backtest(stats, season, week, lookback, min_games)
+    if st.button("Run fresh historical accuracy check", type="secondary"):
+        with st.spinner("Replaying fresh fantasy-only historical projections without future-week leakage..."):
+            results = run_backtest(stats, season, week, lookback, min_games, BACKTEST_CACHE_VERSION)
         if results.empty:
             st.warning("No historical projection matches were available for this setup.")
         else:
+            if "position" in results.columns:
+                invalid_positions = sorted(set(results["position"].dropna().astype(str)) - set(FANTASY_POSITIONS))
+                if invalid_positions:
+                    st.error(f"Validation guard blocked non-fantasy positions: {', '.join(invalid_positions)}")
+                    st.stop()
             summary = fantasy_backtest_summary(results)
             a,b,c,d,e = st.columns(5)
-            a.metric("Samples", f"{summary['n']:,}")
+            a.metric("Fantasy samples", f"{summary['n']:,}")
             b.metric("MAE", f"{summary['mae']:.2f}")
             c.metric("Correlation", f"{summary['correlation']:.2f}" if pd.notna(summary['correlation']) else "—")
             d.metric("Range coverage", f"{summary['interval_coverage']:.0%}" if pd.notna(summary['interval_coverage']) else "—")
             e.metric("Reliability", summary["tier"])
             if summary["tier"] == "STRONG":
-                st.success("Historical fantasy projection performance clears the STRONG research gate for this sample.")
+                st.success("Fantasy-only historical projection performance clears the STRONG research gate for this sample.")
             elif summary["tier"] == "USABLE":
-                st.warning("Historical fantasy projection performance clears the USABLE research gate, but it is not a betting-edge claim.")
+                st.warning("Fantasy-only historical projection performance clears the USABLE research gate, but it is not a betting-edge claim.")
             else:
-                st.error("Historical performance remains in RESEARCH status. NFL Edge should not treat these projections as a proven edge.")
+                st.error("Fantasy-only historical performance remains in RESEARCH status. NFL Edge should not treat these projections as a proven edge.")
             by_position = fantasy_backtest_by_position(results)
             if not by_position.empty:
                 display = by_position[[c for c in ["position","n","mae","rmse","bias","correlation","nmae","interval_coverage","tier"] if c in by_position.columns]].copy()
                 display = display.rename(columns={"position":"Pos","n":"Samples","mae":"MAE","rmse":"RMSE","bias":"Bias","correlation":"Correlation","nmae":"Normalized MAE","interval_coverage":"Range Coverage","tier":"Reliability"})
                 st.dataframe(display.round(3), use_container_width=True, hide_index=True)
 
-st.caption("Projection Engine v1 is a validation layer, not a betting-edge claim. Opponent, injury, depth-chart, market-price and vig-aware validation remain gated behind model testing.")
+st.caption(f"Live build: {BUILD_VERSION}. Projection Engine v1 is a validation layer, not a betting-edge claim. Opponent, injury, depth-chart, market-price and vig-aware validation remain gated behind model testing.")
