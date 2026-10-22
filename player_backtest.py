@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from player_engine import fantasy_points_ppr, normalize_player_schema, project_all_players_as_of, player_history_as_of, _weighted_mean
+from player_engine import fantasy_points_ppr, normalize_player_schema, project_all_players_as_of, player_history_as_of
 from player_validation import empirical_interval_errors, reliability_tier
 
 FANTASY_POSITIONS = ("QB", "RB", "WR", "TE")
@@ -17,6 +17,16 @@ def _fantasy_only(df: pd.DataFrame) -> pd.DataFrame:
     d = df.copy()
     d["position"] = d["position"].astype(str).str.upper().str.strip()
     return d[d["position"].isin(FANTASY_POSITIONS)].copy()
+
+
+def _audit_weighted_mean(values, decay: float = 0.82) -> float:
+    """Local legacy weighting for audit isolation from production internals."""
+    a = np.asarray(list(values), dtype=float)
+    a = a[np.isfinite(a)]
+    if not len(a):
+        return 0.0
+    weights = decay ** np.arange(len(a) - 1, -1, -1)
+    return float(np.average(a, weights=weights))
 
 
 def _legacy_qb_projection(history: pd.DataFrame, player_id: str, lookback: int = 8) -> float:
@@ -33,7 +43,7 @@ def _legacy_qb_projection(history: pd.DataFrame, player_id: str, lookback: int =
     if sort_cols:
         g = g.sort_values(sort_cols)
     points = fantasy_points_ppr(g.tail(max(3, lookback))).astype(float).to_numpy()
-    return round(_weighted_mean(points), 2)
+    return round(_audit_weighted_mean(points), 2)
 
 
 def backtest_fantasy_projections(
@@ -76,7 +86,6 @@ def backtest_fantasy_projections(
             merged["abs_error"] = merged["error"].abs()
             merged["inside_interval"] = (merged["actual_ppr"] >= merged["floor"]) & (merged["actual_ppr"] <= merged["ceiling"])
 
-            # Audit QB v2 against the exact legacy prediction on the same player/week.
             history = player_history_as_of(d, season, week)
             qb_mask = merged["position"].astype(str).str.upper().eq("QB")
             merged["legacy_qb_projection"] = np.nan
