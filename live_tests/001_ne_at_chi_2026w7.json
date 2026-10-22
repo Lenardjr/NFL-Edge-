@@ -1,0 +1,38 @@
+{
+  "test_id": "LIVE-001",
+  "season": 2026,
+  "week": 7,
+  "away_team": "NE",
+  "home_team": "CHI",
+  "game_date": "2026-10-22",
+  "kickoff_et": "20:15",
+  "venue": "Soldier Field",
+  "status": "PREGAME_CONTEXT_FROZEN",
+  "market_snapshot": {
+    "captured_date": "2026-10-22",
+    "source": "FanDuel Research",
+    "away_spread": 3.0,
+    "away_spread_price": -115,
+    "home_spread": -3.0,
+    "home_spread_price": -105,
+    "away_moneyline": 132,
+    "home_moneyline": -156,
+    "total": 50.5,
+    "over_price": -110,
+    "under_price": -110
+  },
+  "injury_snapshot": {
+    "source": "Official Patriots Week 7 injury report",
+    "new_england_out": ["Ben Brown", "Channing Canada", "Carlton Davis III", "Karon Prunty", "Alijah Vera-Tucker"],
+    "new_england_questionable": ["Kevin Byard III", "Christian Elliss", "Morgan Moses", "Craig Woodson"],
+    "new_england_no_game_status": ["Drake Maye", "A.J. Brown", "TreVeyon Henderson"],
+    "chicago_out": ["Kyle Monangai", "Jack Sanborn"],
+    "chicago_doubtful": ["T.J. Edwards"],
+    "chicago_questionable": ["Tyrique Stevenson Sr."]
+  },
+  "integrity": {
+    "market_is_model_input": false,
+    "injuries_are_model_input": false,
+    "note": "This file freezes external pregame context only. Game Engine and Player Engine outputs are generated independently and must be frozen separately before kickoff. No market or injury value in this record is allowed to tune Live Test 001 after the fact."
+  }
+}
