@@ -19,7 +19,9 @@ def diagnose_week6(simulations: int = 20000, seed: int = 42) -> dict:
     d["model_confidence"] = np.maximum(d["home_win_probability"], 1.0 - d["home_win_probability"])
     d["projected_abs_margin"] = d["projected_margin"].abs()
     d["actual_abs_margin"] = d["actual_margin"].abs()
-    d["market_home_margin"] = -pd.to_numeric(d["market_spread"], errors="coerce")
+    # nflverse spread_line is already the expected HOME margin:
+    # positive = home favored, negative = away favored.
+    d["market_home_margin"] = pd.to_numeric(d["market_spread"], errors="coerce")
     d["market_pick"] = np.where(d["market_home_margin"] > 0, d["home_team"], d["away_team"])
     d["model_market_margin_gap"] = d["projected_margin"] - d["market_home_margin"]
     d["model_market_disagree"] = d["model_pick"] != d["market_pick"]
