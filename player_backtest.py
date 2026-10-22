@@ -7,6 +7,17 @@ import pandas as pd
 from player_engine import fantasy_points_ppr, normalize_player_schema, project_all_players_as_of
 from player_validation import empirical_interval_errors, reliability_tier
 
+FANTASY_POSITIONS = ("QB", "RB", "WR", "TE")
+
+
+def _fantasy_only(df: pd.DataFrame) -> pd.DataFrame:
+    """Keep only standard offensive fantasy positions for fantasy validation."""
+    if df is None or df.empty or "position" not in df.columns:
+        return pd.DataFrame() if df is None else df.copy()
+    d = df.copy()
+    d["position"] = d["position"].astype(str).str.upper().str.strip()
+    return d[d["position"].isin(FANTASY_POSITIONS)].copy()
+
 
 def backtest_fantasy_projections(
     stats: pd.DataFrame,
@@ -17,8 +28,8 @@ def backtest_fantasy_projections(
     lookback: int = 8,
     min_games: int = 3,
 ) -> pd.DataFrame:
-    """Chronological player-level PPR backtest with no target-week leakage."""
-    d = normalize_player_schema(stats)
+    """Chronological QB/RB/WR/TE PPR backtest with no target-week leakage."""
+    d = _fantasy_only(normalize_player_schema(stats))
     id_col = next((c for c in ("player_id", "gsis_id", "player_display_name", "player_name") if c in d.columns), None)
     if id_col is None or d.empty:
         return pd.DataFrame()
@@ -31,7 +42,7 @@ def backtest_fantasy_projections(
             continue
         available_weeks = sorted(pd.to_numeric(season_rows["week"], errors="coerce").dropna().astype(int).unique())
         for week in [w for w in available_weeks if start_week <= w <= end_week]:
-            board = project_all_players_as_of(d, season, week, lookback=lookback, min_games=min_games)
+            board = _fantasy_only(project_all_players_as_of(d, season, week, lookback=lookback, min_games=min_games))
             if board.empty:
                 continue
             actual = season_rows[season_rows["week"] == week].copy()
@@ -52,7 +63,8 @@ def backtest_fantasy_projections(
 
 
 def fantasy_backtest_summary(results: pd.DataFrame) -> dict:
-    """Aggregate validation metrics and a conservative reliability label."""
+    """Aggregate fantasy-only validation metrics and a conservative reliability label."""
+    results = _fantasy_only(results)
     if results is None or results.empty:
         return {"n": 0, "mae": np.nan, "rmse": np.nan, "bias": np.nan, "correlation": np.nan, "nmae": np.nan, "interval_coverage": np.nan, "tier": "RESEARCH"}
     metrics = empirical_interval_errors(results["projected_ppr"], results["actual_ppr"])
@@ -63,6 +75,7 @@ def fantasy_backtest_summary(results: pd.DataFrame) -> dict:
 
 
 def fantasy_backtest_by_position(results: pd.DataFrame) -> pd.DataFrame:
+    results = _fantasy_only(results)
     if results is None or results.empty or "position" not in results.columns:
         return pd.DataFrame()
     rows = []
