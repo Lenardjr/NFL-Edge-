@@ -1,0 +1,58 @@
+{
+  "baseline_id": "NFL_EDGE_ENGINE_1_0_2026_WEEK6",
+  "status": "FROZEN_IMMUTABLE_BASELINE",
+  "season": 2026,
+  "week": 6,
+  "validation_mode": "STRICT_PREWEEK_FREEZE",
+  "source_commit": "635ffc105b07460a90224079002b2d08f2c96edc",
+  "source_workflow_run": 39817994972,
+  "simulation_seed": 42,
+  "game_engine": {
+    "games": 14,
+    "training_games": 7355,
+    "winner_accuracy": 0.42857142857142855,
+    "winner_record": "6-8",
+    "margin_mae": 7.889667994563504,
+    "total_mae": 11.270540131302544,
+    "brier_score": 0.27803308410621524,
+    "avg_projected_total": 46.04131657578463,
+    "avg_actual_total": 43.57142857142857
+  },
+  "player_engine": {
+    "projections": 300,
+    "mae": 4.289033333333333,
+    "rmse": 5.736190693018029,
+    "bias": 0.005899999999999845,
+    "correlation": 0.6669881612369948,
+    "nmae": 0.557316481574525,
+    "interval_coverage": 0.59,
+    "tier": "USABLE",
+    "by_position": {
+      "QB": {"n": 29, "mae": 5.109310, "rmse": 5.962713, "bias": 0.474828, "correlation": 0.354217, "nmae": 0.309035, "interval_coverage": 0.620690, "tier": "RESEARCH"},
+      "RB": {"n": 76, "mae": 4.292763, "rmse": 5.973729, "bias": -0.209079, "correlation": 0.636827, "nmae": 0.568875, "interval_coverage": 0.605263, "tier": "RESEARCH"},
+      "WR": {"n": 127, "mae": 4.225827, "rmse": 5.610577, "bias": 0.171654, "correlation": 0.626592, "nmae": 0.618081, "interval_coverage": 0.590551, "tier": "RESEARCH"},
+      "TE": {"n": 68, "mae": 4.053088, "rmse": 5.597043, "bias": -0.263382, "correlation": 0.513057, "nmae": 0.711252, "interval_coverage": 0.558824, "tier": "RESEARCH"}
+    }
+  },
+  "game_results": [
+    {"away":"SEA","home":"DEN","actual":"DEN 17-14","projected_home_margin":-1.336475,"winner_correct":false,"margin_error":4.336475,"total_error":14.429023},
+    {"away":"ARI","home":"LAR","actual":"ARI 18-16","projected_home_margin":9.980758,"winner_correct":false,"margin_error":11.980758,"total_error":12.726460},
+    {"away":"BAL","home":"CLE","actual":"CLE 13-10","projected_home_margin":-4.307768,"winner_correct":false,"margin_error":7.307768,"total_error":23.129310},
+    {"away":"BUF","home":"LV","actual":"BUF 33-30","projected_home_margin":-5.836514,"winner_correct":true,"margin_error":2.836514,"total_error":11.603075},
+    {"away":"CAR","home":"PHI","actual":"CAR 25-14","projected_home_margin":1.175819,"winner_correct":false,"margin_error":12.175819,"total_error":7.476769},
+    {"away":"CHI","home":"ATL","actual":"CHI 31-23","projected_home_margin":-0.353357,"winner_correct":true,"margin_error":7.646643,"total_error":8.299648},
+    {"away":"DAL","home":"GB","actual":"GB 23-13","projected_home_margin":2.916393,"winner_correct":true,"margin_error":7.083607,"total_error":10.937465},
+    {"away":"HOU","home":"JAX","actual":"HOU 34-31","projected_home_margin":5.891521,"winner_correct":false,"margin_error":8.891521,"total_error":20.415093},
+    {"away":"LAC","home":"KC","actual":"KC 22-6","projected_home_margin":9.548320,"winner_correct":true,"margin_error":6.451680,"total_error":18.623596},
+    {"away":"NO","home":"NYG","actual":"NO 34-27","projected_home_margin":3.966199,"winner_correct":false,"margin_error":10.966199,"total_error":14.471882},
+    {"away":"NYJ","home":"NE","actual":"NE 26-19","projected_home_margin":10.114633,"winner_correct":true,"margin_error":3.114633,"total_error":2.611797},
+    {"away":"PIT","home":"TB","actual":"PIT 26-19","projected_home_margin":0.275627,"winner_correct":false,"margin_error":7.275627,"total_error":1.451062},
+    {"away":"TEN","home":"IND","actual":"TEN 26-20","projected_home_margin":8.530663,"winner_correct":false,"margin_error":14.530663,"total_error":2.752008},
+    {"away":"WAS","home":"SF","actual":"SF 23-17","projected_home_margin":11.857444,"winner_correct":true,"margin_error":5.857444,"total_error":8.860374}
+  ],
+  "integrity": {
+    "immutable": true,
+    "rule": "Do not edit this baseline to improve Engine 1.0 results. Future engines must be evaluated against this frozen reference on matched samples.",
+    "live_test_001_untouched": true
+  }
+}
