@@ -13,9 +13,9 @@ except ImportError:
         return {"n": 0, "deployment_pending": True}
 
 PLAYER_URL_TEMPLATE = "https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_{season}.csv"
-BUILD_VERSION = "v1.2.2-qb-audit-import-safe"
-QB_MODEL_VERSION = "QB Engine v2 • component-based"
-BACKTEST_CACHE_VERSION = "qb-v2-vs-legacy-audit-v2"
+BUILD_VERSION = "v1.3.0-qb-v3-championship"
+QB_MODEL_VERSION = "QB Engine v3 • volume-stability challenger"
+BACKTEST_CACHE_VERSION = "qb-v3-vs-legacy-championship-v1"
 FANTASY_POSITIONS = ("QB", "RB", "WR", "TE")
 
 st.set_page_config(page_title="NFL Edge", page_icon="🏈", layout="wide", initial_sidebar_state="collapsed")
@@ -156,8 +156,8 @@ st.caption(f"Build {BUILD_VERSION} • {QB_MODEL_VERSION} • Fantasy-only valid
 if week < 5:
     st.info("Historical accuracy becomes available from Week 5 onward so at least one in-season validation week exists.")
 else:
-    if st.button("Run QB v2 vs legacy historical audit", type="secondary"):
-        with st.spinner("Replaying QB v2 and legacy QB projections on identical historical samples..."):
+    if st.button("Run QB v3 vs legacy historical championship", type="secondary"):
+        with st.spinner("Replaying QB v3 and legacy QB projections on identical historical samples..."):
             results = run_backtest(stats, season, week, lookback, min_games, BACKTEST_CACHE_VERSION)
         if results.empty:
             st.warning("No historical projection matches were available for this setup.")
@@ -187,27 +187,27 @@ else:
                 display = display.rename(columns={"position":"Pos","n":"Samples","mae":"MAE","rmse":"RMSE","bias":"Bias","correlation":"Correlation","nmae":"Normalized MAE","interval_coverage":"Range Coverage","tier":"Reliability"})
                 st.dataframe(display.round(3), use_container_width=True, hide_index=True)
 
-            st.subheader("QB v2 vs Legacy Audit")
+            st.subheader("QB v3 vs Legacy Championship")
             audit = qb_model_audit(results)
             if audit.get("n", 0):
                 a,b,c,d,e = st.columns(5)
                 a.metric("QB samples", f"{audit['n']:,}")
-                b.metric("QB v2 MAE", f"{audit['v2_mae']:.3f}")
+                b.metric("QB v3 MAE", f"{audit['v2_mae']:.3f}")
                 c.metric("Legacy QB MAE", f"{audit['legacy_mae']:.3f}")
                 d.metric("Avg projection Δ", f"{audit['mean_abs_projection_delta']:.3f}")
                 e.metric("Predictions changed", f"{audit['changed_predictions']}/{audit['n']}")
                 st.caption(f"Largest absolute QB projection change: {audit['max_abs_projection_delta']:.3f} PPR points.")
                 if audit['changed_predictions'] == 0:
-                    st.error("Audit failure: QB v2 did not change any historical QB predictions versus legacy.")
+                    st.error("Audit failure: QB v3 did not change any historical QB predictions versus legacy.")
                 elif audit['v2_mae'] < audit['legacy_mae']:
-                    st.success(f"QB v2 improved historical MAE by {audit['legacy_mae'] - audit['v2_mae']:.3f} PPR on identical QB samples.")
+                    st.success(f"QB v3 BEATS the legacy champion by {audit['legacy_mae'] - audit['v2_mae']:.3f} PPR MAE on identical QB samples.")
                 elif audit['v2_mae'] > audit['legacy_mae']:
-                    st.warning(f"QB v2 changed predictions but worsened historical MAE by {audit['v2_mae'] - audit['legacy_mae']:.3f} PPR versus legacy.")
+                    st.warning(f"QB v3 changed predictions but trails legacy by {audit['v2_mae'] - audit['legacy_mae']:.3f} PPR MAE.")
                 else:
-                    st.info("QB v2 changed predictions, but aggregate MAE is tied with legacy on this sample.")
+                    st.info("QB v3 changed predictions, but aggregate MAE is tied with legacy on this sample.")
             elif audit.get("deployment_pending"):
                 st.warning("QB audit helper is still syncing on the deployment. Core dashboard remains available; reboot after the latest deploy completes.")
             else:
-                st.warning("QB audit could not form a matched v2-versus-legacy sample.")
+                st.warning("QB audit could not form a matched v3-versus-legacy sample.")
 
 st.caption(f"Live build: {BUILD_VERSION} • {QB_MODEL_VERSION}. Projection Engine v1 is a validation layer, not a betting-edge claim. Opponent, injury, depth-chart, market-price and vig-aware validation remain gated behind model testing.")
