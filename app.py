@@ -5,12 +5,12 @@ import streamlit as st
 
 from player_engine import normalize_player_schema, project_all_players_as_of, player_history_as_of
 from player_validation import validate_player_feed
-from player_backtest import backtest_fantasy_projections, fantasy_backtest_summary, fantasy_backtest_by_position
+from player_backtest import backtest_fantasy_projections, fantasy_backtest_summary, fantasy_backtest_by_position, qb_model_audit
 
 PLAYER_URL_TEMPLATE = "https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_{season}.csv"
-BUILD_VERSION = "v1.2.0-qb-engine-v2-validation"
+BUILD_VERSION = "v1.2.1-qb-audit"
 QB_MODEL_VERSION = "QB Engine v2 • component-based"
-BACKTEST_CACHE_VERSION = "qb-engine-v2-component-v1"
+BACKTEST_CACHE_VERSION = "qb-v2-vs-legacy-audit-v1"
 FANTASY_POSITIONS = ("QB", "RB", "WR", "TE")
 
 st.set_page_config(page_title="NFL Edge", page_icon="🏈", layout="wide", initial_sidebar_state="collapsed")
@@ -151,8 +151,8 @@ st.caption(f"Build {BUILD_VERSION} • {QB_MODEL_VERSION} • Fantasy-only valid
 if week < 5:
     st.info("Historical accuracy becomes available from Week 5 onward so at least one in-season validation week exists.")
 else:
-    if st.button("Run QB v2 fresh historical accuracy check", type="secondary"):
-        with st.spinner("Replaying QB Engine v2 and fantasy-only historical projections without future-week leakage..."):
+    if st.button("Run QB v2 vs legacy historical audit", type="secondary"):
+        with st.spinner("Replaying QB v2 and legacy QB projections on identical historical samples..."):
             results = run_backtest(stats, season, week, lookback, min_games, BACKTEST_CACHE_VERSION)
         if results.empty:
             st.warning("No historical projection matches were available for this setup.")
@@ -181,5 +181,26 @@ else:
                 display = by_position[[c for c in ["position","n","mae","rmse","bias","correlation","nmae","interval_coverage","tier"] if c in by_position.columns]].copy()
                 display = display.rename(columns={"position":"Pos","n":"Samples","mae":"MAE","rmse":"RMSE","bias":"Bias","correlation":"Correlation","nmae":"Normalized MAE","interval_coverage":"Range Coverage","tier":"Reliability"})
                 st.dataframe(display.round(3), use_container_width=True, hide_index=True)
+
+            st.subheader("QB v2 vs Legacy Audit")
+            audit = qb_model_audit(results)
+            if audit.get("n", 0):
+                a,b,c,d,e = st.columns(5)
+                a.metric("QB samples", f"{audit['n']:,}")
+                b.metric("QB v2 MAE", f"{audit['v2_mae']:.3f}")
+                c.metric("Legacy QB MAE", f"{audit['legacy_mae']:.3f}")
+                d.metric("Avg projection Δ", f"{audit['mean_abs_projection_delta']:.3f}")
+                e.metric("Predictions changed", f"{audit['changed_predictions']}/{audit['n']}")
+                st.caption(f"Largest absolute QB projection change: {audit['max_abs_projection_delta']:.3f} PPR points.")
+                if audit['changed_predictions'] == 0:
+                    st.error("Audit failure: QB v2 did not change any historical QB predictions versus legacy.")
+                elif audit['v2_mae'] < audit['legacy_mae']:
+                    st.success(f"QB v2 improved historical MAE by {audit['legacy_mae'] - audit['v2_mae']:.3f} PPR on identical QB samples.")
+                elif audit['v2_mae'] > audit['legacy_mae']:
+                    st.warning(f"QB v2 changed predictions but worsened historical MAE by {audit['v2_mae'] - audit['legacy_mae']:.3f} PPR versus legacy.")
+                else:
+                    st.info("QB v2 changed predictions, but aggregate MAE is tied with legacy on this sample.")
+            else:
+                st.warning("QB audit could not form a matched v2-versus-legacy sample.")
 
 st.caption(f"Live build: {BUILD_VERSION} • {QB_MODEL_VERSION}. Projection Engine v1 is a validation layer, not a betting-edge claim. Opponent, injury, depth-chart, market-price and vig-aware validation remain gated behind model testing.")
