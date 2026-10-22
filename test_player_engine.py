@@ -96,21 +96,20 @@ def test_as_of_board_is_leakage_safe():
     assert int(board.iloc[0].games_used)==4
 
 
-def test_qb_v3_has_explicit_model_version():
-    assert QB_MODEL_VERSION == "qb-volume-stability-v3"
+def test_qb_champion_has_explicit_model_version():
+    assert QB_MODEL_VERSION == "qb-legacy-champion-v1"
 
 
-def test_qb_v3_is_a_restrained_challenger_to_legacy():
+def test_qb_champion_matches_frozen_weighted_baseline():
     d=sample_qb_stats()
     p=project_player(d,lookback=6)
     legacy=weighted_baseline(fantasy_points_ppr(d).tolist())
     assert p is not None
     assert p.position=="QB"
-    assert abs(p.projected_ppr-legacy) > 0.01
-    assert abs(p.projected_ppr-legacy) < 2.0
+    assert abs(p.projected_ppr-legacy) < 0.01
 
 
-def test_qb_v3_shrinks_recent_touchdown_spike():
+def test_qb_champion_shrinks_recent_touchdown_spike():
     d=sample_qb_stats()
     p=project_player(d,lookback=6)
     recent_game=float(fantasy_points_ppr(d.tail(1)).iloc[0])
