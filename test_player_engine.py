@@ -1,6 +1,7 @@
 import pandas as pd
 
 from player_engine import (
+    QB_MODEL_VERSION,
     normalize_player_schema,
     fantasy_points_ppr,
     project_player,
@@ -25,8 +26,6 @@ def sample_stats(team_column="team"):
 
 def sample_qb_stats():
     rows=[]
-    # Deliberately include a recent TD spike so the component model must differ
-    # from a simple weighted mean of weekly fantasy points.
     games=[
         (1,205,1,1,12,0,0),(2,220,1,0,18,0,0),(3,235,1,1,15,0,0),
         (4,245,2,0,22,0,0),(5,260,2,1,28,0,0),(6,275,5,0,35,1,0),
@@ -97,17 +96,21 @@ def test_as_of_board_is_leakage_safe():
     assert int(board.iloc[0].games_used)==4
 
 
-def test_qb_component_model_differs_from_legacy_weighted_fantasy_average():
+def test_qb_v3_has_explicit_model_version():
+    assert QB_MODEL_VERSION == "qb-volume-stability-v3"
+
+
+def test_qb_v3_is_a_restrained_challenger_to_legacy():
     d=sample_qb_stats()
     p=project_player(d,lookback=6)
-    points=fantasy_points_ppr(d).tolist()
-    legacy=weighted_baseline(points)
+    legacy=weighted_baseline(fantasy_points_ppr(d).tolist())
     assert p is not None
     assert p.position=="QB"
-    assert abs(p.projected_ppr-legacy) > 0.25
+    assert abs(p.projected_ppr-legacy) > 0.01
+    assert abs(p.projected_ppr-legacy) < 2.0
 
 
-def test_qb_component_model_shrinks_recent_touchdown_spike():
+def test_qb_v3_shrinks_recent_touchdown_spike():
     d=sample_qb_stats()
     p=project_player(d,lookback=6)
     recent_game=float(fantasy_points_ppr(d.tail(1)).iloc[0])
