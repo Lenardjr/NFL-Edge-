@@ -5,6 +5,7 @@ import streamlit as st
 
 from player_engine import normalize_player_schema, project_all_players_as_of, player_history_as_of
 from player_validation import validate_player_feed
+from player_backtest import backtest_fantasy_projections, fantasy_backtest_summary, fantasy_backtest_by_position
 
 PLAYER_URL_TEMPLATE = "https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_{season}.csv"
 
@@ -30,6 +31,20 @@ def load_player_stats(start_season: int, end_season: int) -> pd.DataFrame:
     if not frames:
         return pd.DataFrame()
     return normalize_player_schema(pd.concat(frames, ignore_index=True))
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def run_backtest(stats: pd.DataFrame, season: int, week: int, lookback: int, min_games: int) -> pd.DataFrame:
+    end_week = min(max(int(week) - 1, 4), 18)
+    start_season = max(2022, int(season) - 1)
+    return backtest_fantasy_projections(
+        stats,
+        start_season=start_season,
+        end_season=int(season),
+        start_week=4,
+        end_week=end_week,
+        lookback=lookback,
+        min_games=min_games,
+    )
 
 st.title("🏈 NFL EDGE")
 st.markdown('<div class="small">Player Projection Engine v1 • Leakage-safe weekly validation build</div>', unsafe_allow_html=True)
@@ -111,5 +126,36 @@ if names:
     st.markdown(f"<div class='edge-card'><b>{selected}</b> · {p.position or '—'} · {p.team or '—'}<br>{direction} Recent trend: <b>{p.trend:+.1f}</b> PPR vs earlier games · Volatility: <b>{p.volatility:.1f}</b> · Prior games used: <b>{int(p.games_used)}</b></div>", unsafe_allow_html=True)
 else:
     st.info("No players match the selected filters.")
+
+st.divider()
+st.subheader("Historical Accuracy Gate")
+st.caption("Walk-forward validation replays completed weeks chronologically. Each historical projection only sees information that existed before its target week.")
+if week < 5:
+    st.info("Historical accuracy becomes available from Week 5 onward so at least one in-season validation week exists.")
+else:
+    if st.button("Run historical accuracy check", type="secondary"):
+        with st.spinner("Replaying historical player projections without future-week leakage..."):
+            results = run_backtest(stats, season, week, lookback, min_games)
+        if results.empty:
+            st.warning("No historical projection matches were available for this setup.")
+        else:
+            summary = fantasy_backtest_summary(results)
+            a,b,c,d,e = st.columns(5)
+            a.metric("Samples", f"{summary['n']:,}")
+            b.metric("MAE", f"{summary['mae']:.2f}")
+            c.metric("Correlation", f"{summary['correlation']:.2f}" if pd.notna(summary['correlation']) else "—")
+            d.metric("Range coverage", f"{summary['interval_coverage']:.0%}" if pd.notna(summary['interval_coverage']) else "—")
+            e.metric("Reliability", summary["tier"])
+            if summary["tier"] == "STRONG":
+                st.success("Historical fantasy projection performance clears the STRONG research gate for this sample.")
+            elif summary["tier"] == "USABLE":
+                st.warning("Historical fantasy projection performance clears the USABLE research gate, but it is not a betting-edge claim.")
+            else:
+                st.error("Historical performance remains in RESEARCH status. NFL Edge should not treat these projections as a proven edge.")
+            by_position = fantasy_backtest_by_position(results)
+            if not by_position.empty:
+                display = by_position[[c for c in ["position","n","mae","rmse","bias","correlation","nmae","interval_coverage","tier"] if c in by_position.columns]].copy()
+                display = display.rename(columns={"position":"Pos","n":"Samples","mae":"MAE","rmse":"RMSE","bias":"Bias","correlation":"Correlation","nmae":"Normalized MAE","interval_coverage":"Range Coverage","tier":"Reliability"})
+                st.dataframe(display.round(3), use_container_width=True, hide_index=True)
 
 st.caption("Projection Engine v1 is a validation layer, not a betting-edge claim. Opponent, injury, depth-chart, market-price and vig-aware validation remain gated behind model testing.")
