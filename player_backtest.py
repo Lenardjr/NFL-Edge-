@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from player_engine import fantasy_points_ppr, normalize_player_schema, project_all_players_as_of
+from player_engine import fantasy_points_ppr, normalize_player_schema, project_all_players_as_of, player_history_as_of, _weighted_mean
 from player_validation import empirical_interval_errors, reliability_tier
 
 FANTASY_POSITIONS = ("QB", "RB", "WR", "TE")
@@ -17,6 +17,23 @@ def _fantasy_only(df: pd.DataFrame) -> pd.DataFrame:
     d = df.copy()
     d["position"] = d["position"].astype(str).str.upper().str.strip()
     return d[d["position"].isin(FANTASY_POSITIONS)].copy()
+
+
+def _legacy_qb_projection(history: pd.DataFrame, player_id: str, lookback: int = 8) -> float:
+    """Legacy QB projection: recency-weighted fantasy score, for audit only."""
+    if history is None or history.empty:
+        return np.nan
+    id_col = next((c for c in ("player_id", "gsis_id", "player_display_name", "player_name") if c in history.columns), None)
+    if id_col is None:
+        return np.nan
+    g = history[history[id_col].astype(str) == str(player_id)].copy()
+    if g.empty:
+        return np.nan
+    sort_cols = [c for c in ("season", "week") if c in g.columns]
+    if sort_cols:
+        g = g.sort_values(sort_cols)
+    points = fantasy_points_ppr(g.tail(max(3, lookback))).astype(float).to_numpy()
+    return round(_weighted_mean(points), 2)
 
 
 def backtest_fantasy_projections(
@@ -58,6 +75,20 @@ def backtest_fantasy_projections(
             merged["error"] = merged["projected_ppr"] - merged["actual_ppr"]
             merged["abs_error"] = merged["error"].abs()
             merged["inside_interval"] = (merged["actual_ppr"] >= merged["floor"]) & (merged["actual_ppr"] <= merged["ceiling"])
+
+            # Audit QB v2 against the exact legacy prediction on the same player/week.
+            history = player_history_as_of(d, season, week)
+            qb_mask = merged["position"].astype(str).str.upper().eq("QB")
+            merged["legacy_qb_projection"] = np.nan
+            if qb_mask.any():
+                merged.loc[qb_mask, "legacy_qb_projection"] = merged.loc[qb_mask, "player_id"].map(
+                    lambda pid: _legacy_qb_projection(history, pid, lookback=lookback)
+                )
+            merged["qb_model_delta"] = np.where(
+                qb_mask,
+                merged["projected_ppr"] - merged["legacy_qb_projection"],
+                np.nan,
+            )
             rows.append(merged)
     return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
 
@@ -83,3 +114,27 @@ def fantasy_backtest_by_position(results: pd.DataFrame) -> pd.DataFrame:
         summary = fantasy_backtest_summary(group)
         rows.append({"position": position, **summary})
     return pd.DataFrame(rows).sort_values(["mae", "n"], ascending=[True, False]).reset_index(drop=True) if rows else pd.DataFrame()
+
+
+def qb_model_audit(results: pd.DataFrame) -> dict:
+    """Compare component QB v2 with legacy QB projection on identical samples."""
+    if results is None or results.empty or "position" not in results.columns:
+        return {"n": 0}
+    q = results[results["position"].astype(str).str.upper().eq("QB")].copy()
+    needed = ["projected_ppr", "legacy_qb_projection", "actual_ppr"]
+    if q.empty or any(c not in q.columns for c in needed):
+        return {"n": 0}
+    q = q.dropna(subset=needed)
+    if q.empty:
+        return {"n": 0}
+    v2_error = q["projected_ppr"] - q["actual_ppr"]
+    legacy_error = q["legacy_qb_projection"] - q["actual_ppr"]
+    delta = q["projected_ppr"] - q["legacy_qb_projection"]
+    return {
+        "n": int(len(q)),
+        "v2_mae": float(v2_error.abs().mean()),
+        "legacy_mae": float(legacy_error.abs().mean()),
+        "mean_abs_projection_delta": float(delta.abs().mean()),
+        "max_abs_projection_delta": float(delta.abs().max()),
+        "changed_predictions": int((delta.abs() > 0.01).sum()),
+    }
