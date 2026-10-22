@@ -14,7 +14,7 @@ import pandas as pd
 
 TEAM_COLUMNS = ("recent_team", "team", "team_abbr", "club_code")
 TEAM_ALIASES = {"LA": "LAR", "STL": "LAR", "SD": "LAC", "OAK": "LV"}
-QB_MODEL_VERSION = "qb-volume-stability-v3"
+QB_MODEL_VERSION = "qb-legacy-champion-v1"
 
 
 def normalize_player_schema(df: pd.DataFrame) -> pd.DataFrame:
@@ -71,49 +71,6 @@ def fantasy_points_ppr(df: pd.DataFrame) -> pd.Series:
     )
 
 
-def _qb_v3_projection(d: pd.DataFrame, lookback: int) -> float:
-    """QB v3 challenger: stable volume plus conservative scoring regression.
-
-    v2 over-engineered component recency without improving walk-forward MAE.
-    v3 stays closer to the proven legacy fantasy baseline while separately
-    estimating stable passing/rushing volume and regressing volatile TD and
-    turnover rates. All inputs are historical rows already available as-of the
-    projection week.
-    """
-    recent = d.tail(max(3, lookback)).copy()
-    stable = d.tail(min(16, len(d))).copy()
-    legacy = _weighted_mean(fantasy_points_ppr(recent).to_numpy(), decay=0.82)
-
-    def rec(name: str, decay: float = 0.82) -> float:
-        return _weighted_mean(_safe_series(recent, name).to_numpy(), decay=decay)
-
-    def base(name: str) -> float:
-        values = _safe_series(stable, name).to_numpy(dtype=float)
-        return float(np.mean(values)) if len(values) else 0.0
-
-    # Volume is more repeatable than weekly fantasy totals.
-    pass_yards = 0.70 * rec("passing_yards", 0.82) + 0.30 * base("passing_yards")
-    rush_yards = 0.75 * rec("rushing_yards", 0.82) + 0.25 * base("rushing_yards")
-
-    # Scoring/turnovers are noisier, so lean more heavily on longer history.
-    pass_tds = 0.40 * rec("passing_tds", 0.82) + 0.60 * base("passing_tds")
-    rush_tds = 0.40 * rec("rushing_tds", 0.82) + 0.60 * base("rushing_tds")
-    interceptions = 0.40 * rec("interceptions", 0.82) + 0.60 * base("interceptions")
-    fumbles_lost = 0.40 * rec("fumbles_lost", 0.82) + 0.60 * base("fumbles_lost")
-
-    stable_component = (
-        0.04 * pass_yards
-        + 4.0 * pass_tds
-        - 2.0 * interceptions
-        + 0.10 * rush_yards
-        + 6.0 * rush_tds
-        - 2.0 * fumbles_lost
-    )
-
-    # Legacy remains champion; v3 is intentionally a restrained challenger.
-    return float(0.70 * legacy + 0.30 * stable_component)
-
-
 @dataclass
 class PlayerProjection:
     player_id: str
@@ -140,15 +97,14 @@ def project_player(history: pd.DataFrame, lookback: int = 8) -> PlayerProjection
     sort_cols = [c for c in ("season", "week") if c in d.columns]
     if sort_cols:
         d = d.sort_values(sort_cols)
-    position_value = str(d.iloc[-1].get("position", "")).upper().strip()
     recent = d.tail(max(3, lookback)).copy()
     recent["ppr"] = fantasy_points_ppr(recent)
     points = recent["ppr"].astype(float).to_numpy()
 
-    if position_value == "QB" and len(d) >= 3:
-        projected = _qb_v3_projection(d, lookback)
-    else:
-        projected = _weighted_mean(points)
+    # Player Engine 1.0 champion: the leakage-safe recency-weighted baseline.
+    # QB v2/v3 challengers failed to beat this model on the matched 204-sample
+    # historical QB championship, so they are not promoted to production.
+    projected = _weighted_mean(points)
 
     recent_avg = float(np.mean(points[-3:])) if len(points) else 0.0
     volatility = float(np.std(points, ddof=0)) if len(points) > 1 else 0.0
