@@ -18,8 +18,11 @@ MARKET_WEIGHT = 0.30
 
 
 def market_home_margin(market_spread: pd.Series) -> pd.Series:
-    """Convert nflverse spread convention to home-team expected margin."""
-    return -pd.to_numeric(market_spread, errors="coerce")
+    """Return nflverse spread_line as expected home-team margin.
+
+    Positive = home favored; negative = away favored.
+    """
+    return pd.to_numeric(market_spread, errors="coerce")
 
 
 def anchored_margin(model_margin: pd.Series, market_spread: pd.Series) -> pd.Series:
