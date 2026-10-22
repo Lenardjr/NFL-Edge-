@@ -13,11 +13,14 @@ on:
       - 'engine_1_1_diagnostics.py'
       - 'engine_1_1_challenger.py'
       - 'engine_1_1_b_challenger.py'
+      - 'prospective_holdout.py'
+      - 'baselines/engine_1_1_b_candidate_2026w6.json'
       - 'app.py'
       - 'test_player_engine.py'
       - 'test_player_validation.py'
       - 'test_player_backtest.py'
       - 'test_week6_backtest.py'
+      - 'test_prospective_holdout.py'
       - 'requirements.txt'
       - '.github/workflows/validate-player-engine.yml'
   workflow_dispatch:
@@ -37,9 +40,9 @@ jobs:
           pip install -r requirements.txt pytest
       - name: Syntax validation
         run: |
-          python -m py_compile player_engine.py player_validation.py player_backtest.py game_engine.py live_game.py week6_backtest.py week6_championship.py engine_1_1_diagnostics.py engine_1_1_challenger.py engine_1_1_b_challenger.py test_week6_backtest.py app.py nfl_edge.py
+          python -m py_compile player_engine.py player_validation.py player_backtest.py game_engine.py live_game.py week6_backtest.py week6_championship.py engine_1_1_diagnostics.py engine_1_1_challenger.py engine_1_1_b_challenger.py prospective_holdout.py test_week6_backtest.py test_prospective_holdout.py app.py nfl_edge.py
       - name: Unit tests
-        run: pytest -q test_player_engine.py test_player_validation.py test_player_backtest.py test_week6_backtest.py
+        run: pytest -q test_player_engine.py test_player_validation.py test_player_backtest.py test_week6_backtest.py test_prospective_holdout.py
       - name: Week 6 retrospective championship
         run: python week6_championship.py
       - name: Engine 1.1 diagnostic report
