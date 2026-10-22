@@ -1,7 +1,7 @@
 """NFL Edge Game Engine 1.1-B challenger.
 
 Development-only challenger. It separates winner selection from margin estimation:
-- winner pick remains the independent Engine 1.0 win-probability signal;
+- winner pick remains the Engine 1.0 projected-margin winner signal;
 - projected margin uses a conservative 70/30 model/market anchor when a line exists.
 
 Week 6 is diagnostic/development data. Multi-week results are reported for robustness,
@@ -39,13 +39,17 @@ def evaluate_week(season: int, week: int, simulations: int = 10000, seed: int = 
     d["v11b_margin"] = adjusted_margin(d["v10_margin"], d["market_spread"])
     d["actual_home_win"] = pd.to_numeric(d["actual_margin"], errors="coerce") > 0
 
-    # Separation is intentional: pick comes from Engine 1.0 calibrated probability,
-    # not from the market-adjusted margin.
-    d["v11b_home_pick"] = pd.to_numeric(d["home_win_probability"], errors="coerce") >= 0.5
+    # Winner selection is deliberately frozen to Engine 1.0 semantics.
+    # The challenger may improve margin estimation without silently changing picks.
+    d["v11b_home_pick"] = d["v10_margin"] > 0
     d["v11b_winner_correct"] = d["v11b_home_pick"] == d["actual_home_win"]
+    d["winner_definition_match"] = d["v11b_winner_correct"] == d["winner_correct"]
     d["v11b_margin_error"] = (d["v11b_margin"] - d["actual_margin"]).abs()
     d["v10_market_gap"] = (d["v10_margin"] - market_home_margin(d["market_spread"])).abs()
     d["v11b_market_gap"] = (d["v11b_margin"] - market_home_margin(d["market_spread"])).abs()
+
+    if not bool(d["winner_definition_match"].all()):
+        raise AssertionError("Engine 1.1-B winner definition diverged from frozen Engine 1.0")
 
     summary = {
         "season": int(season),
@@ -53,6 +57,7 @@ def evaluate_week(season: int, week: int, simulations: int = 10000, seed: int = 
         "games": int(len(d)),
         "v10_winner_accuracy": float(d["winner_correct"].mean()),
         "v11b_winner_accuracy": float(d["v11b_winner_correct"].mean()),
+        "winner_definition_matches": bool(d["winner_definition_match"].all()),
         "v10_margin_mae": float(d["margin_error"].mean()),
         "v11b_margin_mae": float(d["v11b_margin_error"].mean()),
         "margin_mae_delta": float(d["v11b_margin_error"].mean() - d["margin_error"].mean()),
@@ -86,6 +91,7 @@ def evaluate_multiweek(season: int = 2026, weeks: tuple[int, ...] = DEFAULT_WEEK
         "market_weight": MARKET_WEIGHT,
         "v10_winner_accuracy": float(all_games["winner_correct"].mean()),
         "v11b_winner_accuracy": float(all_games["v11b_winner_correct"].mean()),
+        "winner_definition_matches": bool(all_games["winner_definition_match"].all()),
         "v10_margin_mae": float(all_games["margin_error"].mean()),
         "v11b_margin_mae": float(all_games["v11b_margin_error"].mean()),
         "margin_mae_delta": float(all_games["v11b_margin_error"].mean() - all_games["margin_error"].mean()),
