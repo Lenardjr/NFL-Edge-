@@ -5,12 +5,17 @@ import streamlit as st
 
 from player_engine import normalize_player_schema, project_all_players_as_of, player_history_as_of
 from player_validation import validate_player_feed
-from player_backtest import backtest_fantasy_projections, fantasy_backtest_summary, fantasy_backtest_by_position, qb_model_audit
+from player_backtest import backtest_fantasy_projections, fantasy_backtest_summary, fantasy_backtest_by_position
+try:
+    from player_backtest import qb_model_audit
+except ImportError:
+    def qb_model_audit(results: pd.DataFrame) -> dict:
+        return {"n": 0, "deployment_pending": True}
 
 PLAYER_URL_TEMPLATE = "https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_{season}.csv"
-BUILD_VERSION = "v1.2.1-qb-audit"
+BUILD_VERSION = "v1.2.2-qb-audit-import-safe"
 QB_MODEL_VERSION = "QB Engine v2 • component-based"
-BACKTEST_CACHE_VERSION = "qb-v2-vs-legacy-audit-v1"
+BACKTEST_CACHE_VERSION = "qb-v2-vs-legacy-audit-v2"
 FANTASY_POSITIONS = ("QB", "RB", "WR", "TE")
 
 st.set_page_config(page_title="NFL Edge", page_icon="🏈", layout="wide", initial_sidebar_state="collapsed")
@@ -200,6 +205,8 @@ else:
                     st.warning(f"QB v2 changed predictions but worsened historical MAE by {audit['v2_mae'] - audit['legacy_mae']:.3f} PPR versus legacy.")
                 else:
                     st.info("QB v2 changed predictions, but aggregate MAE is tied with legacy on this sample.")
+            elif audit.get("deployment_pending"):
+                st.warning("QB audit helper is still syncing on the deployment. Core dashboard remains available; reboot after the latest deploy completes.")
             else:
                 st.warning("QB audit could not form a matched v2-versus-legacy sample.")
 
