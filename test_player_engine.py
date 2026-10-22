@@ -23,6 +23,29 @@ def sample_stats(team_column="team"):
     return pd.DataFrame(rows)
 
 
+def sample_qb_stats():
+    rows=[]
+    # Deliberately include a recent TD spike so the component model must differ
+    # from a simple weighted mean of weekly fantasy points.
+    games=[
+        (1,205,1,1,12,0,0),(2,220,1,0,18,0,0),(3,235,1,1,15,0,0),
+        (4,245,2,0,22,0,0),(5,260,2,1,28,0,0),(6,275,5,0,35,1,0),
+    ]
+    for week,py,ptd,ints,ry,rtd,fl in games:
+        rows.append({
+            "season":2026,"week":week,"player_id":"qb1","player_display_name":"Test Quarterback",
+            "position":"QB","team":"DET","passing_yards":py,"passing_tds":ptd,
+            "interceptions":ints,"rushing_yards":ry,"rushing_tds":rtd,"fumbles_lost":fl,
+            "receptions":0,"receiving_yards":0,"receiving_tds":0,
+        })
+    return pd.DataFrame(rows)
+
+
+def weighted_baseline(points, decay=0.82):
+    weights=[decay ** i for i in range(len(points)-1,-1,-1)]
+    return sum(p*w for p,w in zip(points,weights))/sum(weights)
+
+
 def test_schema_normalizes_team_alias_column():
     d=normalize_player_schema(sample_stats("team_abbr"))
     assert "recent_team" in d.columns
@@ -72,3 +95,33 @@ def test_as_of_board_is_leakage_safe():
     board=project_all_players_as_of(d,2026,5,lookback=8,min_games=3)
     assert len(board)==1
     assert int(board.iloc[0].games_used)==4
+
+
+def test_qb_component_model_differs_from_legacy_weighted_fantasy_average():
+    d=sample_qb_stats()
+    p=project_player(d,lookback=6)
+    points=fantasy_points_ppr(d).tolist()
+    legacy=weighted_baseline(points)
+    assert p is not None
+    assert p.position=="QB"
+    assert abs(p.projected_ppr-legacy) > 0.25
+
+
+def test_qb_component_model_shrinks_recent_touchdown_spike():
+    d=sample_qb_stats()
+    p=project_player(d,lookback=6)
+    recent_game=float(fantasy_points_ppr(d.tail(1)).iloc[0])
+    assert p is not None
+    assert p.projected_ppr < recent_game
+    assert p.floor <= p.projected_ppr <= p.ceiling
+
+
+def test_qb_as_of_projection_excludes_target_week_spike():
+    d=sample_qb_stats()
+    board=project_all_players_as_of(d,2026,6,lookback=6,min_games=3)
+    direct=project_player(d[d.week < 6],lookback=6)
+    assert len(board)==1
+    assert direct is not None
+    assert board.iloc[0].position=="QB"
+    assert board.iloc[0].projected_ppr==direct.projected_ppr
+    assert int(board.iloc[0].games_used)==5
