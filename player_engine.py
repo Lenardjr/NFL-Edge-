@@ -14,6 +14,7 @@ import pandas as pd
 
 TEAM_COLUMNS = ("recent_team", "team", "team_abbr", "club_code")
 TEAM_ALIASES = {"LA": "LAR", "STL": "LAR", "SD": "LAC", "OAK": "LV"}
+QB_MODEL_VERSION = "qb-volume-stability-v3"
 
 
 def normalize_player_schema(df: pd.DataFrame) -> pd.DataFrame:
@@ -70,32 +71,37 @@ def fantasy_points_ppr(df: pd.DataFrame) -> pd.Series:
     )
 
 
-def _qb_component_projection(d: pd.DataFrame, lookback: int) -> float:
-    """Project QB fantasy points from underlying production components.
+def _qb_v3_projection(d: pd.DataFrame, lookback: int) -> float:
+    """QB v3 challenger: stable volume plus conservative scoring regression.
 
-    Volume stats get stronger recency weighting while high-variance TD/turnover
-    stats are mildly regressed toward the QB's longer history. This remains
-    strictly as-of because ``d`` is already historical data only.
+    v2 over-engineered component recency without improving walk-forward MAE.
+    v3 stays closer to the proven legacy fantasy baseline while separately
+    estimating stable passing/rushing volume and regressing volatile TD and
+    turnover rates. All inputs are historical rows already available as-of the
+    projection week.
     """
     recent = d.tail(max(3, lookback)).copy()
     stable = d.tail(min(16, len(d))).copy()
+    legacy = _weighted_mean(fantasy_points_ppr(recent).to_numpy(), decay=0.82)
 
-    def recent_mean(name: str, decay: float = 0.84) -> float:
+    def rec(name: str, decay: float = 0.82) -> float:
         return _weighted_mean(_safe_series(recent, name).to_numpy(), decay=decay)
 
-    def stable_mean(name: str) -> float:
+    def base(name: str) -> float:
         values = _safe_series(stable, name).to_numpy(dtype=float)
         return float(np.mean(values)) if len(values) else 0.0
 
-    pass_yards = recent_mean("passing_yards", 0.86)
-    rush_yards = recent_mean("rushing_yards", 0.86)
+    # Volume is more repeatable than weekly fantasy totals.
+    pass_yards = 0.70 * rec("passing_yards", 0.82) + 0.30 * base("passing_yards")
+    rush_yards = 0.75 * rec("rushing_yards", 0.82) + 0.25 * base("rushing_yards")
 
-    pass_tds = 0.60 * recent_mean("passing_tds", 0.84) + 0.40 * stable_mean("passing_tds")
-    rush_tds = 0.60 * recent_mean("rushing_tds", 0.84) + 0.40 * stable_mean("rushing_tds")
-    interceptions = 0.65 * recent_mean("interceptions", 0.84) + 0.35 * stable_mean("interceptions")
-    fumbles_lost = 0.65 * recent_mean("fumbles_lost", 0.84) + 0.35 * stable_mean("fumbles_lost")
+    # Scoring/turnovers are noisier, so lean more heavily on longer history.
+    pass_tds = 0.40 * rec("passing_tds", 0.82) + 0.60 * base("passing_tds")
+    rush_tds = 0.40 * rec("rushing_tds", 0.82) + 0.60 * base("rushing_tds")
+    interceptions = 0.40 * rec("interceptions", 0.82) + 0.60 * base("interceptions")
+    fumbles_lost = 0.40 * rec("fumbles_lost", 0.82) + 0.60 * base("fumbles_lost")
 
-    return float(
+    stable_component = (
         0.04 * pass_yards
         + 4.0 * pass_tds
         - 2.0 * interceptions
@@ -103,6 +109,9 @@ def _qb_component_projection(d: pd.DataFrame, lookback: int) -> float:
         + 6.0 * rush_tds
         - 2.0 * fumbles_lost
     )
+
+    # Legacy remains champion; v3 is intentionally a restrained challenger.
+    return float(0.70 * legacy + 0.30 * stable_component)
 
 
 @dataclass
@@ -137,7 +146,7 @@ def project_player(history: pd.DataFrame, lookback: int = 8) -> PlayerProjection
     points = recent["ppr"].astype(float).to_numpy()
 
     if position_value == "QB" and len(d) >= 3:
-        projected = _qb_component_projection(d, lookback)
+        projected = _qb_v3_projection(d, lookback)
     else:
         projected = _weighted_mean(points)
 
