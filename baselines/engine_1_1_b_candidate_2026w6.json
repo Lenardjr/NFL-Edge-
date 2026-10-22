@@ -1,0 +1,46 @@
+{
+  "candidate_id": "NFL_EDGE_ENGINE_1_1_B_CORRECTED_2026W6",
+  "status": "FROZEN_PROSPECTIVE_CHALLENGER",
+  "frozen_after_development_through": {
+    "season": 2026,
+    "week": 6
+  },
+  "specification": {
+    "winner_signal": "Engine 1.0 projected-margin sign; unchanged by challenger",
+    "margin_formula": "0.70 * Engine_1.0_projected_margin + 0.30 * market_home_margin",
+    "model_weight": 0.70,
+    "market_weight": 0.30,
+    "market_spread_semantics": "nflverse spread_line is home expected margin: positive means home favored; negative means away favored",
+    "missing_market_line_behavior": "fall back to Engine 1.0 projected margin"
+  },
+  "development_evidence": {
+    "season": 2026,
+    "weeks": [2, 3, 4, 5, 6],
+    "games": 77,
+    "engine_1_0_winner_accuracy": 0.5454545454545454,
+    "engine_1_1_b_winner_accuracy": 0.5454545454545454,
+    "winner_definition_matches": true,
+    "engine_1_0_margin_mae": 9.315099121277123,
+    "engine_1_1_b_margin_mae": 9.166023930348532,
+    "margin_mae_improvement_points": 0.1490751909285919,
+    "weeks_margin_improved": 4,
+    "weeks_margin_worsened": 1
+  },
+  "week_6_corrected_check": {
+    "engine_1_0_margin_mae": 7.889667994563503,
+    "engine_1_1_b_margin_mae": 7.515624739051595,
+    "winner_accuracy": 0.42857142857142855
+  },
+  "validation": {
+    "unit_tests_passed": 21,
+    "strict_preweek_freeze": true,
+    "development_weeks_are_not_holdout": true,
+    "promotion_requires_future_untouched_games": true
+  },
+  "integrity": {
+    "immutable": true,
+    "rule": "Do not edit this candidate after freezing to improve prospective results. Any future model change must receive a new candidate ID and separate artifact.",
+    "engine_1_0_baseline_untouched": true,
+    "live_test_001_prediction_untouched": true
+  }
+}
