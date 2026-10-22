@@ -31,11 +31,7 @@ def normalize_player_schema(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def player_history_as_of(stats: pd.DataFrame, season: int, week: int) -> pd.DataFrame:
-    """Completed player games strictly before the requested season/week.
-
-    Prior-season games remain available, which keeps early-season projections
-    useful without leaking the target week or any future results.
-    """
+    """Completed player games strictly before the requested season/week."""
     d = normalize_player_schema(stats)
     if d.empty or "season" not in d.columns or "week" not in d.columns:
         return pd.DataFrame(columns=d.columns)
@@ -100,10 +96,21 @@ def project_player(history: pd.DataFrame, lookback: int = 8) -> PlayerProjection
     sort_cols = [c for c in ("season", "week") if c in d.columns]
     if sort_cols:
         d = d.sort_values(sort_cols)
-    d = d.tail(max(3, lookback)).copy()
-    d["ppr"] = fantasy_points_ppr(d)
-    points = d["ppr"].astype(float).to_numpy()
-    projected = _weighted_mean(points)
+    position_value = str(d.iloc[-1].get("position", "")).upper().strip()
+    # QB scoring is noisier week-to-week than RB/WR/TE scoring. Preserve a
+    # longer stable prior and blend it with the recent form instead of letting
+    # a few TD-heavy games dominate the next projection.
+    full_points = fantasy_points_ppr(d).astype(float).to_numpy()
+    recent = d.tail(max(3, lookback)).copy()
+    recent["ppr"] = fantasy_points_ppr(recent)
+    points = recent["ppr"].astype(float).to_numpy()
+    recent_weighted = _weighted_mean(points)
+    if position_value == "QB" and len(full_points) >= 6:
+        stable_points = full_points[-min(16, len(full_points)):]
+        stable_mean = float(np.mean(stable_points))
+        projected = 0.70 * recent_weighted + 0.30 * stable_mean
+    else:
+        projected = recent_weighted
     recent_avg = float(np.mean(points[-3:])) if len(points) else 0.0
     volatility = float(np.std(points, ddof=0)) if len(points) > 1 else 0.0
     trend = float(recent_avg - np.mean(points[:-3])) if len(points) > 3 else 0.0
@@ -112,7 +119,7 @@ def project_player(history: pd.DataFrame, lookback: int = 8) -> PlayerProjection
     sample_score = min(1.0, len(points) / max(lookback, 1))
     stability = 1.0 / (1.0 + volatility / max(projected, 4.0))
     confidence = float(np.clip(0.55 * sample_score + 0.45 * stability, 0.0, 1.0))
-    row = d.iloc[-1]
+    row = recent.iloc[-1]
     name = row.get("player_display_name", row.get("player_name", row.get("name", "Unknown")))
     pid = row.get("player_id", row.get("gsis_id", str(name)))
     team = row.get("recent_team")
