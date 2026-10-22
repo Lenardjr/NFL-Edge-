@@ -70,6 +70,41 @@ def fantasy_points_ppr(df: pd.DataFrame) -> pd.Series:
     )
 
 
+def _qb_component_projection(d: pd.DataFrame, lookback: int) -> float:
+    """Project QB fantasy points from underlying production components.
+
+    Volume stats get stronger recency weighting while high-variance TD/turnover
+    stats are mildly regressed toward the QB's longer history. This remains
+    strictly as-of because ``d`` is already historical data only.
+    """
+    recent = d.tail(max(3, lookback)).copy()
+    stable = d.tail(min(16, len(d))).copy()
+
+    def recent_mean(name: str, decay: float = 0.84) -> float:
+        return _weighted_mean(_safe_series(recent, name).to_numpy(), decay=decay)
+
+    def stable_mean(name: str) -> float:
+        values = _safe_series(stable, name).to_numpy(dtype=float)
+        return float(np.mean(values)) if len(values) else 0.0
+
+    pass_yards = recent_mean("passing_yards", 0.86)
+    rush_yards = recent_mean("rushing_yards", 0.86)
+
+    pass_tds = 0.60 * recent_mean("passing_tds", 0.84) + 0.40 * stable_mean("passing_tds")
+    rush_tds = 0.60 * recent_mean("rushing_tds", 0.84) + 0.40 * stable_mean("rushing_tds")
+    interceptions = 0.65 * recent_mean("interceptions", 0.84) + 0.35 * stable_mean("interceptions")
+    fumbles_lost = 0.65 * recent_mean("fumbles_lost", 0.84) + 0.35 * stable_mean("fumbles_lost")
+
+    return float(
+        0.04 * pass_yards
+        + 4.0 * pass_tds
+        - 2.0 * interceptions
+        + 0.10 * rush_yards
+        + 6.0 * rush_tds
+        - 2.0 * fumbles_lost
+    )
+
+
 @dataclass
 class PlayerProjection:
     player_id: str
@@ -97,20 +132,15 @@ def project_player(history: pd.DataFrame, lookback: int = 8) -> PlayerProjection
     if sort_cols:
         d = d.sort_values(sort_cols)
     position_value = str(d.iloc[-1].get("position", "")).upper().strip()
-    # QB scoring is noisier week-to-week than RB/WR/TE scoring. Preserve a
-    # longer stable prior and blend it with the recent form instead of letting
-    # a few TD-heavy games dominate the next projection.
-    full_points = fantasy_points_ppr(d).astype(float).to_numpy()
     recent = d.tail(max(3, lookback)).copy()
     recent["ppr"] = fantasy_points_ppr(recent)
     points = recent["ppr"].astype(float).to_numpy()
-    recent_weighted = _weighted_mean(points)
-    if position_value == "QB" and len(full_points) >= 6:
-        stable_points = full_points[-min(16, len(full_points)):]
-        stable_mean = float(np.mean(stable_points))
-        projected = 0.70 * recent_weighted + 0.30 * stable_mean
+
+    if position_value == "QB" and len(d) >= 3:
+        projected = _qb_component_projection(d, lookback)
     else:
-        projected = recent_weighted
+        projected = _weighted_mean(points)
+
     recent_avg = float(np.mean(points[-3:])) if len(points) else 0.0
     volatility = float(np.std(points, ddof=0)) if len(points) > 1 else 0.0
     trend = float(recent_avg - np.mean(points[:-3])) if len(points) > 3 else 0.0
