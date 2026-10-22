@@ -8,8 +8,8 @@ from player_validation import validate_player_feed
 from player_backtest import backtest_fantasy_projections, fantasy_backtest_summary, fantasy_backtest_by_position
 
 PLAYER_URL_TEMPLATE = "https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_{season}.csv"
-BUILD_VERSION = "v1.1.0-fantasy-only-qb-challenger"
-BACKTEST_CACHE_VERSION = "fantasy-only-v2"
+BUILD_VERSION = "v1.1.1-fantasy-boundary-fix"
+BACKTEST_CACHE_VERSION = "fantasy-only-v3"
 FANTASY_POSITIONS = ("QB", "RB", "WR", "TE")
 
 st.set_page_config(page_title="NFL Edge", page_icon="🏈", layout="wide", initial_sidebar_state="collapsed")
@@ -35,15 +35,23 @@ def load_player_stats(start_season: int, end_season: int) -> pd.DataFrame:
         return pd.DataFrame()
     return normalize_player_schema(pd.concat(frames, ignore_index=True))
 
+
+def fantasy_only(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty or "position" not in df.columns:
+        return pd.DataFrame() if df is None else df.copy()
+    d = df.copy()
+    d["position"] = d["position"].astype(str).str.upper().str.strip()
+    return d[d["position"].isin(FANTASY_POSITIONS)].copy()
+
+
 @st.cache_data(ttl=900, show_spinner=False)
 def run_backtest(stats: pd.DataFrame, season: int, week: int, lookback: int, min_games: int, cache_version: str) -> pd.DataFrame:
-    # cache_version intentionally participates in Streamlit's cache key so model
-    # changes cannot silently reuse historical results from an older deployment.
     _ = cache_version
+    fantasy_stats = fantasy_only(stats)
     end_week = min(max(int(week) - 1, 4), 18)
     start_season = max(2022, int(season) - 1)
-    return backtest_fantasy_projections(
-        stats,
+    results = backtest_fantasy_projections(
+        fantasy_stats,
         start_season=start_season,
         end_season=int(season),
         start_week=4,
@@ -51,6 +59,7 @@ def run_backtest(stats: pd.DataFrame, season: int, week: int, lookback: int, min
         lookback=lookback,
         min_games=min_games,
     )
+    return fantasy_only(results)
 
 st.title("🏈 NFL EDGE")
 st.markdown(f'<div class="small">Player Projection Engine v1 • Leakage-safe weekly validation build • <b>{BUILD_VERSION}</b></div>', unsafe_allow_html=True)
@@ -146,11 +155,12 @@ else:
         if results.empty:
             st.warning("No historical projection matches were available for this setup.")
         else:
-            if "position" in results.columns:
-                invalid_positions = sorted(set(results["position"].dropna().astype(str)) - set(FANTASY_POSITIONS))
-                if invalid_positions:
-                    st.error(f"Validation guard blocked non-fantasy positions: {', '.join(invalid_positions)}")
-                    st.stop()
+            positions_in_results = sorted(set(results["position"].dropna().astype(str))) if "position" in results.columns else []
+            invalid_positions = sorted(set(positions_in_results) - set(FANTASY_POSITIONS))
+            if invalid_positions:
+                st.error(f"Validation guard blocked non-fantasy positions: {', '.join(invalid_positions)}")
+                st.stop()
+            st.caption(f"Validated positions in this run: {', '.join(positions_in_results)}")
             summary = fantasy_backtest_summary(results)
             a,b,c,d,e = st.columns(5)
             a.metric("Fantasy samples", f"{summary['n']:,}")
