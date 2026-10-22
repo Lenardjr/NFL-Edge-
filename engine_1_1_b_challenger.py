@@ -20,7 +20,11 @@ DEFAULT_WEEKS = (2, 3, 4, 5, 6)
 
 
 def market_home_margin(spread: pd.Series) -> pd.Series:
-    return -pd.to_numeric(spread, errors="coerce")
+    """Return nflverse spread_line as expected home-team margin.
+
+    Positive = home favored; negative = away favored.
+    """
+    return pd.to_numeric(spread, errors="coerce")
 
 
 def adjusted_margin(model_margin: pd.Series, spread: pd.Series) -> pd.Series:
