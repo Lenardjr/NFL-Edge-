@@ -1,0 +1,40 @@
+{
+  "ledger_id": "2026W7-LIVE-001",
+  "status": "PREGAME_FROZEN_AWAITING_RESULT",
+  "game_id": "2026_07_NE_CHI",
+  "season": 2026,
+  "week": 7,
+  "away_team": "NE",
+  "home_team": "CHI",
+  "kickoff_et": "2026-10-22T20:15:00-04:00",
+  "source_prediction_artifact": "live_tests/001_ne_at_chi_2026w7_prediction.json",
+  "engine_1_0": {
+    "projected_away_score": 21.0,
+    "projected_home_score": 21.8,
+    "projected_home_margin": 0.8,
+    "projected_total": 42.8,
+    "official_pick": "CHI",
+    "home_win_probability": 0.525
+  },
+  "market_snapshot": {
+    "home_margin": 3.0,
+    "display_spread": "CHI -3.0",
+    "total": 50.5,
+    "away_moneyline": 132,
+    "home_moneyline": -156
+  },
+  "engine_1_1_b_frozen_challenger": {
+    "candidate_id": "NFL_EDGE_ENGINE_1_1_B_CORRECTED_2026W6",
+    "formula": "0.70 * engine_1_0_home_margin + 0.30 * market_home_margin",
+    "projected_home_margin": 1.46,
+    "winner_pick": "CHI",
+    "winner_pick_rule": "unchanged from Engine 1.0"
+  },
+  "result": null,
+  "integrity": {
+    "prediction_values_frozen": true,
+    "result_must_be_added_only_after_game_is_final": true,
+    "do_not_edit_source_prediction_artifact": true,
+    "future_result_should_be_recorded_in_a_separate_companion_result_artifact": true
+  }
+}
