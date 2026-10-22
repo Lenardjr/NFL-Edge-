@@ -5,9 +5,11 @@ on:
     paths:
       - 'player_engine.py'
       - 'player_validation.py'
+      - 'player_backtest.py'
       - 'app.py'
       - 'test_player_engine.py'
       - 'test_player_validation.py'
+      - 'test_player_backtest.py'
       - 'requirements.txt'
       - '.github/workflows/validate-player-engine.yml'
   workflow_dispatch:
@@ -27,6 +29,6 @@ jobs:
           pip install -r requirements.txt pytest
       - name: Syntax validation
         run: |
-          python -m py_compile player_engine.py player_validation.py app.py nfl_edge.py
+          python -m py_compile player_engine.py player_validation.py player_backtest.py app.py nfl_edge.py
       - name: Unit tests
-        run: pytest -q test_player_engine.py test_player_validation.py
+        run: pytest -q test_player_engine.py test_player_validation.py test_player_backtest.py
