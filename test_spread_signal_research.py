@@ -15,7 +15,7 @@ def test_enrichment_and_spread_grading():
 
 
 def test_segment_table_marks_small_samples_ineligible():
-    d=pd.DataFrame({"bucket":["A","A"],"result":["WIN","LOSS"]})
+    d=pd.DataFrame({"bucket":["A","A"],"result":["WIN","LOSS"],"units":[100/110,-1.0]})
     table=segment_table(d,"bucket",min_bets=20)
     assert table.iloc[0].bets==2
     assert not bool(table.iloc[0].eligible)
