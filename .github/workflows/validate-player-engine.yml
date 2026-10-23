@@ -24,6 +24,7 @@ on:
       - 'spread_walkforward.py'
       - 'game_betting_multiseason.py'
       - 'spread_signal_research.py'
+      - 'spread_challenger.py'
       - 'engine_1_1_diagnostics.py'
       - 'engine_1_1_challenger.py'
       - 'engine_1_1_b_challenger.py'
@@ -43,6 +44,7 @@ on:
       - 'test_spread_walkforward.py'
       - 'test_game_betting_multiseason.py'
       - 'test_spread_signal_research.py'
+      - 'test_spread_challenger.py'
       - 'test_week6_backtest.py'
       - 'test_prospective_holdout.py'
       - 'test_prospective_ledger.py'
@@ -65,9 +67,9 @@ jobs:
           pip install -r requirements.txt pytest
       - name: Syntax validation
         run: |
-          python -m py_compile player_engine.py player_validation.py player_backtest.py player_stat_engine.py player_stat_backtest.py player_stat_championship.py player_stat_qb_challenger.py qb_stat_championship.py qb_stat_v03_challenger.py qb_stat_v03_championship.py qb_stat_v04_context.py qb_stat_v04_championship.py game_engine.py live_game.py week6_backtest.py week6_championship.py game_betting_lab.py game_betting_diagnostics.py spread_walkforward.py game_betting_multiseason.py spread_signal_research.py engine_1_1_diagnostics.py engine_1_1_challenger.py engine_1_1_b_challenger.py prospective_holdout.py prospective_ledger.py test_player_stat_engine.py test_player_stat_qb_challenger.py test_qb_stat_v04_context.py test_game_betting_lab.py test_game_betting_diagnostics.py test_spread_walkforward.py test_game_betting_multiseason.py test_spread_signal_research.py test_week6_backtest.py test_prospective_holdout.py test_prospective_ledger.py app.py nfl_edge.py
+          python -m py_compile player_engine.py player_validation.py player_backtest.py player_stat_engine.py player_stat_backtest.py player_stat_championship.py player_stat_qb_challenger.py qb_stat_championship.py qb_stat_v03_challenger.py qb_stat_v03_championship.py qb_stat_v04_context.py qb_stat_v04_championship.py game_engine.py live_game.py week6_backtest.py week6_championship.py game_betting_lab.py game_betting_diagnostics.py spread_walkforward.py game_betting_multiseason.py spread_signal_research.py spread_challenger.py engine_1_1_diagnostics.py engine_1_1_challenger.py engine_1_1_b_challenger.py prospective_holdout.py prospective_ledger.py test_player_stat_engine.py test_player_stat_qb_challenger.py test_qb_stat_v04_context.py test_game_betting_lab.py test_game_betting_diagnostics.py test_spread_walkforward.py test_game_betting_multiseason.py test_spread_signal_research.py test_spread_challenger.py test_week6_backtest.py test_prospective_holdout.py test_prospective_ledger.py app.py nfl_edge.py
       - name: Unit tests
-        run: pytest -q test_player_engine.py test_player_validation.py test_player_backtest.py test_player_stat_engine.py test_player_stat_qb_challenger.py test_qb_stat_v04_context.py test_game_betting_lab.py test_game_betting_diagnostics.py test_spread_walkforward.py test_game_betting_multiseason.py test_spread_signal_research.py test_week6_backtest.py test_prospective_holdout.py test_prospective_ledger.py
+        run: pytest -q test_player_engine.py test_player_validation.py test_player_backtest.py test_player_stat_engine.py test_player_stat_qb_challenger.py test_qb_stat_v04_context.py test_game_betting_lab.py test_game_betting_diagnostics.py test_spread_walkforward.py test_game_betting_multiseason.py test_spread_signal_research.py test_spread_challenger.py test_week6_backtest.py test_prospective_holdout.py test_prospective_ledger.py
       - name: Prospective ledger audit
         run: python prospective_ledger.py
       - name: Week 6 retrospective championship
@@ -82,6 +84,8 @@ jobs:
         run: python game_betting_multiseason.py
       - name: Spread signal research 2023-2025
         run: python spread_signal_research.py
+      - name: Strict spread challenger train-validation
+        run: python spread_challenger.py
       - name: Player production Week 6 championship
         run: python player_stat_championship.py
       - name: QB production challenger Week 6 championship
