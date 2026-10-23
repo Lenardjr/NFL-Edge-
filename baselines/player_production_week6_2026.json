@@ -1,0 +1,31 @@
+{
+  "artifact_id": "NFL_EDGE_PLAYER_PRODUCTION_2026W6_CLEAN_V1",
+  "status": "FROZEN_RESEARCH_BASELINE",
+  "season": 2026,
+  "week": 6,
+  "validation_mode": "STRICT_PRE_WEEK_6_PLAYER_HISTORY",
+  "eligibility": "Pregame prop-eligible roles only, determined from historical usage before Week 6",
+  "stat_observations": 1030,
+  "source_commit": "963b0728f0f5dc3bfa312109c7b10156cca65b81",
+  "workflow_run": 39839787246,
+  "unit_tests_passed": 29,
+  "metrics": {
+    "attempts": {"n":29,"mae":8.607586,"rmse":11.433530,"bias":-5.004828,"correlation":0.074953,"coverage":0.586207},
+    "carries": {"n":86,"mae":2.956628,"rmse":4.162481,"bias":-0.196395,"correlation":0.749916,"coverage":0.604651},
+    "completions": {"n":29,"mae":5.269655,"rmse":6.867964,"bias":-2.620690,"correlation":0.193430,"coverage":0.655172},
+    "passing_tds": {"n":29,"mae":0.888276,"rmse":1.094544,"bias":-0.000690,"correlation":0.175660,"coverage":0.517241},
+    "passing_yards": {"n":29,"mae":52.499310,"rmse":65.931660,"bias":-18.430345,"correlation":0.382239,"coverage":0.689655},
+    "receiving_tds": {"n":164,"mae":0.363659,"rmse":0.526084,"bias":0.030854,"correlation":-0.043293,"coverage":0.762195},
+    "receiving_yards": {"n":164,"mae":20.243780,"rmse":25.666494,"bias":0.788537,"correlation":0.597883,"coverage":0.560976},
+    "receptions": {"n":164,"mae":1.596707,"rmse":2.089227,"bias":-0.024024,"correlation":0.568682,"coverage":0.573171},
+    "rushing_tds": {"n":86,"mae":0.332209,"rmse":0.498217,"bias":0.049186,"correlation":0.316811,"coverage":0.767442},
+    "rushing_yards": {"n":86,"mae":16.660930,"rmse":21.891858,"bias":2.086744,"correlation":0.670909,"coverage":0.639535},
+    "targets": {"n":164,"mae":2.120671,"rmse":2.798133,"bias":-0.344573,"correlation":0.658059,"coverage":0.573171}
+  },
+  "research_read": {
+    "strongest_volume_signals": ["carries", "rushing_yards", "targets", "receiving_yards", "receptions"],
+    "needs_major_improvement": ["attempts", "completions", "passing_yards", "passing_tds", "receiving_tds"],
+    "note": "Correlation and MAE are development diagnostics, not evidence of profitable betting performance. No player-stat model is promoted from this artifact."
+  },
+  "integrity_rule": "Immutable research baseline. Future model changes must be compared in a new artifact; do not rewrite these Week 6 results."
+}
