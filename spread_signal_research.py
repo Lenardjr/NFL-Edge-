@@ -20,6 +20,7 @@ DEV_SEASONS=(2023,2024)
 VALIDATION_SEASON=2025
 HOLDOUT_SEASON=2026
 BREAK_EVEN_WIN_RATE=110/210
+WIN_UNITS=100/110
 
 
 def enrich(history:pd.DataFrame)->pd.DataFrame:
@@ -40,6 +41,7 @@ def side_bets(d:pd.DataFrame)->pd.DataFrame:
     x["probability"]=np.where(x.model_side=="HOME",x.home_cover_probability,1-x.home_cover_probability)
     x["gap"]=x.model_market_gap
     x["result"]=np.where(x.actual_margin==x.market_spread,"PUSH",np.where((x.model_side=="HOME")==(x.actual_margin>x.market_spread),"WIN","LOSS"))
+    x["units"]=np.where(x.result=="WIN",WIN_UNITS,np.where(x.result=="LOSS",-1.0,0.0))
     return x
 
 
