@@ -9,6 +9,8 @@ on:
       - 'player_stat_engine.py'
       - 'player_stat_backtest.py'
       - 'player_stat_championship.py'
+      - 'player_stat_qb_challenger.py'
+      - 'qb_stat_championship.py'
       - 'game_engine.py'
       - 'live_game.py'
       - 'week6_backtest.py'
@@ -47,7 +49,7 @@ jobs:
           pip install -r requirements.txt pytest
       - name: Syntax validation
         run: |
-          python -m py_compile player_engine.py player_validation.py player_backtest.py player_stat_engine.py player_stat_backtest.py player_stat_championship.py game_engine.py live_game.py week6_backtest.py week6_championship.py engine_1_1_diagnostics.py engine_1_1_challenger.py engine_1_1_b_challenger.py prospective_holdout.py prospective_ledger.py test_player_stat_engine.py test_week6_backtest.py test_prospective_holdout.py test_prospective_ledger.py app.py nfl_edge.py
+          python -m py_compile player_engine.py player_validation.py player_backtest.py player_stat_engine.py player_stat_backtest.py player_stat_championship.py player_stat_qb_challenger.py qb_stat_championship.py game_engine.py live_game.py week6_backtest.py week6_championship.py engine_1_1_diagnostics.py engine_1_1_challenger.py engine_1_1_b_challenger.py prospective_holdout.py prospective_ledger.py test_player_stat_engine.py test_week6_backtest.py test_prospective_holdout.py test_prospective_ledger.py app.py nfl_edge.py
       - name: Unit tests
         run: pytest -q test_player_engine.py test_player_validation.py test_player_backtest.py test_player_stat_engine.py test_week6_backtest.py test_prospective_holdout.py test_prospective_ledger.py
       - name: Prospective ledger audit
@@ -56,6 +58,8 @@ jobs:
         run: python week6_championship.py
       - name: Player production Week 6 championship
         run: python player_stat_championship.py
+      - name: QB production challenger Week 6 championship
+        run: python qb_stat_championship.py
       - name: Engine 1.1 diagnostic report
         run: python engine_1_1_diagnostics.py
       - name: Engine 1.1-A challenger comparison
