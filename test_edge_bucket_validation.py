@@ -5,8 +5,8 @@ from edge_bucket_validation import _bucket_metrics, _side_rows, evaluate_split
 
 def sample_history():
     return pd.DataFrame([
-        {"season_eval": 2023, "week_eval": 1, "gameday": "2023-09-10", "away_team": "A", "home_team": "H", "home_cover_prob": .60, "spread_line": -2.5, "home_score": 27, "away_score": 20},
-        {"season_eval": 2025, "week_eval": 1, "gameday": "2025-09-07", "away_team": "B", "home_team": "J", "home_cover_prob": .51, "spread_line": 3.0, "home_score": 20, "away_score": 24},
+        {"season_eval": 2023, "week_eval": 1, "gameday": "2023-09-10", "away_team": "A", "home_team": "H", "home_cover_probability": .60, "market_spread": 2.5, "actual_margin": 7.0},
+        {"season_eval": 2025, "week_eval": 1, "gameday": "2025-09-07", "away_team": "B", "home_team": "J", "home_cover_probability": .51, "market_spread": -3.0, "actual_margin": -4.0},
     ])
 
 
