@@ -1,0 +1,22 @@
+name: Edge Bucket Validation
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Unit tests
+        run: python -m pytest -q test_edge_math.py test_game_market_edge.py test_edge_bucket_validation.py
+      - name: Run leakage-safe edge bucket validation
+        run: python edge_bucket_validation.py
