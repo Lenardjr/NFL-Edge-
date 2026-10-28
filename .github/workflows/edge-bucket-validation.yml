@@ -19,8 +19,10 @@ jobs:
           pip install -r requirements.txt
           pip install pytest
       - name: Unit tests
-        run: python -m pytest -q test_edge_math.py test_game_market_edge.py test_edge_bucket_validation.py test_probability_calibration.py
+        run: python -m pytest -q test_edge_math.py test_game_market_edge.py test_edge_bucket_validation.py test_probability_calibration.py test_signal_diagnostics.py
       - name: Run leakage-safe edge bucket validation
         run: python edge_bucket_validation.py
       - name: Run leakage-safe probability calibration
         run: python probability_calibration.py
+      - name: Run development-only signal diagnostics
+        run: python signal_diagnostics.py
