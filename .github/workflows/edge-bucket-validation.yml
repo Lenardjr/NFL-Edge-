@@ -15,7 +15,9 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
+          pip install pytest
       - name: Unit tests
         run: python -m pytest -q test_edge_math.py test_game_market_edge.py test_edge_bucket_validation.py
       - name: Run leakage-safe edge bucket validation
