@@ -13,7 +13,6 @@ import math
 import pandas as pd
 
 from edge_math import assess_two_way_side
-from game_betting_lab import score_bets
 from game_betting_multiseason import load_history
 
 DEV_SEASONS = (2023, 2024)
@@ -23,36 +22,42 @@ BUCKET_ORDER = ["PASS", "LEAN", "EDGE", "STRONG_EDGE"]
 
 
 def _side_rows(history: pd.DataFrame) -> pd.DataFrame:
-    """Create one spread recommendation per game from the stronger model side."""
+    """Create one spread recommendation per game from the stronger model side.
+
+    Retrospective history uses the canonical betting-lab schema:
+    home_cover_probability = model probability home covers,
+    market_spread = sportsbook expected home margin,
+    actual_margin = realized home margin.
+    """
     rows = []
-    required = {"home_cover_prob", "spread_line", "home_score", "away_score"}
+    required = {"home_cover_probability", "market_spread", "actual_margin"}
     missing = required.difference(history.columns)
     if missing:
         raise KeyError(f"history missing required columns: {sorted(missing)}")
 
     for _, g in history.iterrows():
-        p_home = float(g.home_cover_prob)
+        p_home = float(g.home_cover_probability)
         home = assess_two_way_side(p_home, -110, -110)
         away = assess_two_way_side(1.0 - p_home, -110, -110)
         side, assessment = ("HOME", home) if home.expected_value >= away.expected_value else ("AWAY", away)
 
-        spread = float(g.spread_line)
-        home_margin = float(g.home_score) - float(g.away_score)
-        home_ats = home_margin + spread
-        if home_ats == 0:
+        market_spread = float(g.market_spread)
+        actual_margin = float(g.actual_margin)
+        ats_delta = actual_margin - market_spread
+        if math.isclose(ats_delta, 0.0, abs_tol=1e-9):
             result = "PUSH"
             units = 0.0
         else:
-            won = home_ats > 0 if side == "HOME" else home_ats < 0
+            won = ats_delta > 0 if side == "HOME" else ats_delta < 0
             result = "WIN" if won else "LOSS"
             units = 1.0 if won else -1.1
 
         rows.append({
             "season_eval": int(g.season_eval),
             "week_eval": int(g.week_eval),
-            "gameday": g.gameday,
-            "away_team": g.away_team,
-            "home_team": g.home_team,
+            "gameday": g.get("gameday", None),
+            "away_team": g.get("away_team", None),
+            "home_team": g.get("home_team", None),
             "market": "SPREAD",
             "side": side,
             "model_probability": assessment.model_probability,
