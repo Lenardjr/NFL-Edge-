@@ -19,7 +19,7 @@ jobs:
           pip install -r requirements.txt
           pip install pytest
       - name: Unit tests
-        run: python -m pytest -q test_edge_math.py test_game_market_edge.py test_edge_bucket_validation.py test_probability_calibration.py test_calibration_signal_diagnostics.py test_ats_signal_root_cause.py
+        run: python -m pytest -q test_edge_math.py test_game_market_edge.py test_edge_bucket_validation.py test_probability_calibration.py test_calibration_signal_diagnostics.py test_ats_signal_root_cause.py test_market_residual_challenger.py
       - name: Run leakage-safe edge bucket validation
         run: python edge_bucket_validation.py
       - name: Run leakage-safe probability calibration
@@ -28,3 +28,5 @@ jobs:
         run: python calibration_signal_diagnostics.py
       - name: Run ATS signal root-cause diagnostics
         run: python ats_signal_root_cause.py
+      - name: Run development-only market residual challenger
+        run: python market_residual_challenger.py
