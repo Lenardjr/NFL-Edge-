@@ -28,6 +28,9 @@ jobs:
           test -s research_outputs/nfl_v3_predictions.csv
           python -m research.compare_v3 --predictions research_outputs/nfl_v3_predictions.csv --output research_outputs/nfl_v3_comparison.json
           test -s research_outputs/nfl_v3_comparison.json
+          python -m research.run_nfl_v4_market --predictions research_outputs/nfl_v3_predictions.csv --output-dir research_outputs
+          test -s research_outputs/nfl_v4_market_summary.json
+          test -s research_outputs/nfl_v4_market_predictions.csv
       - name: Archive V3 results
         if: always()
         uses: actions/upload-artifact@v4
