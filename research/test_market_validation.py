@@ -1,6 +1,6 @@
 """Deterministic arithmetic and integrity tests; run: python -m unittest discover -s research -p 'test_*.py'."""
 import unittest
-from market_validation import (
+from research.market_validation import (
     american_to_decimal, implied_probability, no_vig_two_way,
     expected_roi, brier_score, log_loss, validate_snapshot, settle_moneyline
 )
