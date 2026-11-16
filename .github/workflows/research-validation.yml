@@ -34,6 +34,8 @@ jobs:
           python -m research.run_nfl_v2 --output-dir research_outputs
           test -s research_outputs/nfl_v2_summary.json
           test -s research_outputs/nfl_v2_predictions.csv
+          python -m research.compare_v2 --predictions research_outputs/nfl_v2_predictions.csv
+          test -s research_outputs/nfl_v2_comparison.json
       - name: Upload research report
         if: always()
         uses: actions/upload-artifact@v4
