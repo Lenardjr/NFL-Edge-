@@ -35,6 +35,9 @@ jobs:
           test -s research_outputs/nfl_v5_diagnostics.json
           python -m research.v5_calibration_audit --predictions research_outputs/nfl_v3_predictions.csv --output research_outputs/nfl_v5_calibration_audit.json
           test -s research_outputs/nfl_v5_calibration_audit.json
+          python -m research.v5_extreme_cases --predictions research_outputs/nfl_v3_predictions.csv --output-dir research_outputs
+          test -s research_outputs/nfl_v5_extreme_case_review.csv
+          test -s research_outputs/nfl_v5_extreme_case_summary.json
       - name: Archive V3 results
         if: always()
         uses: actions/upload-artifact@v4
