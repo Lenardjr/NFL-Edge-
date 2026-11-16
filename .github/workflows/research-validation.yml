@@ -1,0 +1,31 @@
+name: Research validation
+on:
+  push:
+    branches:
+      - research/model-validation-2026
+  workflow_dispatch:
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install model dependencies
+        run: pip install -r requirements.txt
+      - name: Unit tests
+        run: python -m unittest discover -s research -p 'test_*.py' -v
+      - name: Run chronological NFL baseline
+        run: |
+          python -m research.run_nfl_baseline --output-dir research_outputs
+          test -s research_outputs/nfl_baseline_predictions.csv
+          test -s research_outputs/nfl_baseline_summary.json
+      - name: Upload research report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nfl-baseline-research
+          path: research_outputs/
+          if-no-files-found: warn
