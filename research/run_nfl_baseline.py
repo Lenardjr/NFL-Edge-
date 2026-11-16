@@ -8,7 +8,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import pandas as pd
-from game_engine import FEATURES, pipe, pregame_features
+from game_engine import FEATURES, pregame_features
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
@@ -22,10 +22,12 @@ def run(games: pd.DataFrame, first_test_season: int = 2022):
     g["gameday"] = pd.to_datetime(g["gameday"], errors="coerce")
     for c in ("home_score", "away_score", "home_moneyline", "away_moneyline"):
         if c in g: g[c] = pd.to_numeric(g[c], errors="coerce")
-    g = g.sort_values(["gameday", "gametime", "game_id"], na_position="last").reset_index(drop=True)
+    sort_cols = [c for c in ("gameday", "gametime", "game_id") if c in g.columns]
+    g = g.sort_values(sort_cols, na_position="last").reset_index(drop=True)
+    # Exclude incomplete games from chronological state transitions.
     features = pregame_features(g)
     done = features.dropna(subset=["target_margin", "target_total"]).copy()
-    done = done.sort_values(["gameday", "gametime", "game_id"], na_position="last")
+    done = done.sort_values(sort_cols, na_position="last")
     test = done[(done.season >= first_test_season) & (done.home_games_prior >= 2) & (done.away_games_prior >= 2)]
     rows = []
     for (season, week), week_games in test.groupby(["season", "week"], sort=True):
