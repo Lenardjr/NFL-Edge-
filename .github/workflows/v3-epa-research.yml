@@ -1,5 +1,10 @@
 name: V3 EPA historical research
 on:
+  push:
+    branches:
+      - research/model-validation-2026
+    paths:
+      - '.github/workflows/v3-epa-research.yml'
   workflow_dispatch:
 jobs:
   backtest:
