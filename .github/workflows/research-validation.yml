@@ -22,6 +22,13 @@ jobs:
           python -m research.run_nfl_baseline --output-dir research_outputs
           test -s research_outputs/nfl_baseline_predictions.csv
           test -s research_outputs/nfl_baseline_summary.json
+      - name: Analyze baseline and market-relative corrections
+        run: |
+          python -m research.analyze_baseline --predictions research_outputs/nfl_baseline_predictions.csv
+          python -m research.diagnose_disagreement --predictions research_outputs/nfl_baseline_predictions.csv
+          python -m research.market_residual --predictions research_outputs/nfl_baseline_predictions.csv
+          test -s research_outputs/market_residual_summary.json
+          test -s research_outputs/market_residual_predictions.csv
       - name: Upload research report
         if: always()
         uses: actions/upload-artifact@v4
