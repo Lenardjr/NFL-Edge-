@@ -29,6 +29,11 @@ jobs:
           python -m research.market_residual --predictions research_outputs/nfl_baseline_predictions.csv
           test -s research_outputs/market_residual_summary.json
           test -s research_outputs/market_residual_predictions.csv
+      - name: Run opponent-adjusted V2 comparison
+        run: |
+          python -m research.run_nfl_v2 --output-dir research_outputs
+          test -s research_outputs/nfl_v2_summary.json
+          test -s research_outputs/nfl_v2_predictions.csv
       - name: Upload research report
         if: always()
         uses: actions/upload-artifact@v4
