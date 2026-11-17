@@ -43,6 +43,9 @@ jobs:
           test -s research_outputs/nfl_v5_matchup_enrichment_summary.json
           python -m research.v5_rest_comparison --predictions research_outputs/nfl_v3_predictions.csv --output research_outputs/nfl_v5_rest_comparison.json
           test -s research_outputs/nfl_v5_rest_comparison.json
+          python -m research.v5_pregame_research_queue --cases research_outputs/nfl_v5_extreme_cases_with_matchups.csv --output-dir research_outputs
+          test -s research_outputs/nfl_v5_extreme_pregame_research_queue.csv
+          test -s research_outputs/nfl_v5_extreme_pregame_queue_summary.json
       - name: Archive V3 results
         if: always()
         uses: actions/upload-artifact@v4
