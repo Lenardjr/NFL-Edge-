@@ -18,7 +18,7 @@ jobs:
       - name: Install research dependencies
         run: |
           pip install -r requirements.txt
-          pip install pyarrow
+          pip install pyarrow pyreadr
       - name: Test feature and full-model temporal invariance
         run: python -m unittest discover -s research -p 'test_*.py' -v
       - name: Download and evaluate 2018-2026 EPA
@@ -105,6 +105,9 @@ jobs:
           python -m research.injury_asset_fingerprint --assets research_outputs/nfl_2024_qb_asset_kickoff_timing.csv --output-dir research_outputs
           test -s research_outputs/nfl_2024_qb_asset_fingerprints.csv
           test -s research_outputs/nfl_2024_qb_asset_fingerprint_summary.json
+          python -m research.injury_rds_schema --assets research_outputs/nfl_2024_qb_asset_kickoff_timing.csv --output-dir research_outputs
+          test -s research_outputs/nfl_2024_qb_rds_schema.csv
+          test -s research_outputs/nfl_2024_qb_rds_schema_summary.json
           python -m research.run_nfl_v6_rest --v3-predictions research_outputs/nfl_v3_predictions.csv --output-dir research_outputs
           test -s research_outputs/nfl_v6_rest_summary.json
           test -s research_outputs/nfl_v6_rest_predictions.csv
