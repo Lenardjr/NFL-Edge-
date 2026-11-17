@@ -21,7 +21,7 @@ def audit(candidates:pd.DataFrame, timing:pd.DataFrame):
     report=pd.to_datetime(d.report_date,utc=True,errors="coerce")
     kickoff=pd.to_datetime(d.kickoff_utc,utc=True,errors="coerce")
     # Explicit timezone offsets only; a date-only value is not a verified timestamp.
-    offset=d.report_date.str.contains(r"(?:Z|[+-]\\d{2}:?\\d{2})$",regex=True,case=False)
+    offset=d.report_date.str.contains(r"(?:Z|[+-]\d{2}:?\d{2})$",regex=True,case=False)
     d["report_timestamp_parseable"]=report.notna() & offset
     d["report_timestamp_before_kickoff"]=d.report_timestamp_parseable & kickoff.notna() & report.lt(kickoff)
     d["source_verified"]=False
