@@ -46,6 +46,9 @@ jobs:
           python -m research.v5_pregame_research_queue --cases research_outputs/nfl_v5_extreme_cases_with_matchups.csv --output-dir research_outputs
           test -s research_outputs/nfl_v5_extreme_pregame_research_queue.csv
           test -s research_outputs/nfl_v5_extreme_pregame_queue_summary.json
+          python -m research.run_nfl_v6_rest --v3-predictions research_outputs/nfl_v3_predictions.csv --output-dir research_outputs
+          test -s research_outputs/nfl_v6_rest_summary.json
+          test -s research_outputs/nfl_v6_rest_predictions.csv
       - name: Archive V3 results
         if: always()
         uses: actions/upload-artifact@v4
