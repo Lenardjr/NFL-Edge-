@@ -65,6 +65,8 @@ jobs:
           python -m research.market_incremental_benchmark --predictions research_outputs/nfl_v3_predictions.csv --output-dir research_outputs
           test -s research_outputs/nfl_market_incremental_summary.json
           test -s research_outputs/nfl_market_incremental_predictions.csv
+          python -m research.market_incremental_uncertainty --predictions research_outputs/nfl_market_incremental_predictions.csv --output research_outputs/nfl_market_incremental_uncertainty.json
+          test -s research_outputs/nfl_market_incremental_uncertainty.json
           python -m research.run_nfl_v6_rest --v3-predictions research_outputs/nfl_v3_predictions.csv --output-dir research_outputs
           test -s research_outputs/nfl_v6_rest_summary.json
           test -s research_outputs/nfl_v6_rest_predictions.csv
