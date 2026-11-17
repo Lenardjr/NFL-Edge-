@@ -99,6 +99,9 @@ jobs:
           python -m research.injury_asset_metadata --priority research_outputs/nfl_2024_qb_priority_games.csv --output-dir research_outputs
           test -s research_outputs/nfl_2024_qb_asset_metadata.csv
           test -s research_outputs/nfl_2024_qb_asset_metadata_summary.json
+          python -m research.injury_asset_kickoff --assets research_outputs/nfl_2024_qb_asset_metadata.csv --qb-queue research_outputs/nfl_2024_qb_source_verification_queue.csv --output-dir research_outputs
+          test -s research_outputs/nfl_2024_qb_asset_kickoff_timing.csv
+          test -s research_outputs/nfl_2024_qb_asset_kickoff_timing_summary.json
           python -m research.run_nfl_v6_rest --v3-predictions research_outputs/nfl_v3_predictions.csv --output-dir research_outputs
           test -s research_outputs/nfl_v6_rest_summary.json
           test -s research_outputs/nfl_v6_rest_predictions.csv
