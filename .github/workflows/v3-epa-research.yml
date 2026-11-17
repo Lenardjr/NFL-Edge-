@@ -118,6 +118,9 @@ jobs:
           python -m research.injury_qb_record_audit --candidates research_outputs/nfl_2024_qb_rds_extracted_candidates.csv --timing research_outputs/nfl_2024_qb_asset_kickoff_timing.csv --output-dir research_outputs
           test -s research_outputs/nfl_2024_qb_rds_record_audit.csv
           test -s research_outputs/nfl_2024_qb_rds_record_audit_summary.json
+          python -m research.injury_qb_schema_mapping --schema research_outputs/nfl_2024_qb_rds_schema.csv --extraction research_outputs/nfl_2024_qb_rds_extraction_audit.csv --output-dir research_outputs
+          test -s research_outputs/nfl_2024_qb_rds_field_mapping_review.csv
+          test -s research_outputs/nfl_2024_qb_rds_field_mapping_summary.json
           python -m research.run_nfl_v6_rest --v3-predictions research_outputs/nfl_v3_predictions.csv --output-dir research_outputs
           test -s research_outputs/nfl_v6_rest_summary.json
           test -s research_outputs/nfl_v6_rest_predictions.csv
