@@ -11,6 +11,7 @@ class InjuryTimingAuditTests(unittest.TestCase):
         self.assertEqual(d.timing_class.iloc[0],"modified_before_kickoff_unverified")
         self.assertEqual(s["verified_pregame_rows"],0)
         self.assertFalse(d.eligible_for_model.iloc[0])
+        self.assertEqual(d.kickoff_utc.iloc[0],"2024-09-08T17:00:00+00:00")
     def test_naive_not_assumed_utc(self):
         k,i=self.fixtures();i.loc[0,"date_modified"]="2024-09-07 12:00:00"
         d,_=audit(k,i);self.assertEqual(d.timing_class.iloc[0],"timestamp_timezone_unverified")
