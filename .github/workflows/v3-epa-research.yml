@@ -26,6 +26,8 @@ jobs:
           python -m research.run_nfl_v3 --output-dir research_outputs
           test -s research_outputs/nfl_v3_summary.json
           test -s research_outputs/nfl_v3_predictions.csv
+          python -m research.model_integrity_audit --predictions research_outputs/nfl_v3_predictions.csv --output research_outputs/nfl_integrity_audit.json
+          test -s research_outputs/nfl_integrity_audit.json
           python -m research.compare_v3 --predictions research_outputs/nfl_v3_predictions.csv --output research_outputs/nfl_v3_comparison.json
           test -s research_outputs/nfl_v3_comparison.json
           python -m research.run_nfl_v4_market --predictions research_outputs/nfl_v3_predictions.csv --output-dir research_outputs
