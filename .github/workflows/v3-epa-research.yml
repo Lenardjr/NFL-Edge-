@@ -90,6 +90,9 @@ jobs:
           python -m research.injury_qb_source_queue --review research_outputs/nfl_2024_qb_extreme_injury_review.csv --output-dir research_outputs
           test -f research_outputs/nfl_2024_qb_source_verification_queue.csv
           test -s research_outputs/nfl_2024_qb_source_verification_summary.json
+          python -m research.injury_qb_priority --queue research_outputs/nfl_2024_qb_source_verification_queue.csv --cases research_outputs/nfl_v5_extreme_case_review.csv --limit 20 --output-dir research_outputs
+          test -s research_outputs/nfl_2024_qb_priority_games.csv
+          test -s research_outputs/nfl_2024_qb_priority_summary.json
           python -m research.run_nfl_v6_rest --v3-predictions research_outputs/nfl_v3_predictions.csv --output-dir research_outputs
           test -s research_outputs/nfl_v6_rest_summary.json
           test -s research_outputs/nfl_v6_rest_predictions.csv
