@@ -54,6 +54,9 @@ jobs:
           python -m research.qb_retrospective_reference --queue research_outputs/nfl_qb_pregame_verification_queue.csv --output-dir research_outputs
           test -s research_outputs/nfl_qb_retrospective_reference.csv
           test -s research_outputs/nfl_qb_reference_coverage.json
+          python -m research.qb_priority_review --output-dir research_outputs
+          test -s research_outputs/nfl_qb_priority_source_review.csv
+          test -s research_outputs/nfl_qb_priority_source_summary.json
           python -m research.run_nfl_v6_rest --v3-predictions research_outputs/nfl_v3_predictions.csv --output-dir research_outputs
           test -s research_outputs/nfl_v6_rest_summary.json
           test -s research_outputs/nfl_v6_rest_predictions.csv
