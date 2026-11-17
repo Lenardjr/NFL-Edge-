@@ -80,6 +80,7 @@ jobs:
           test -s research_outputs/nfl_injury_release_schema_audit.json
           python -m research.injury_timing_audit --kickoffs research_outputs/nfl_kickoff_reference.csv --seasons 2024 2025 --output-dir research_outputs
           test -s research_outputs/nfl_injury_timing_join.csv
+          python -c "import pandas as pd; d=pd.read_csv('research_outputs/nfl_injury_timing_join.csv',nrows=1); assert 'kickoff_utc' in d.columns, 'kickoff_utc missing from injury join'"
           test -s research_outputs/nfl_injury_timing_summary.json
           python -m research.injury_timestamp_diagnostics --joined research_outputs/nfl_injury_timing_join.csv --output research_outputs/nfl_injury_timestamp_diagnostics.json
           test -s research_outputs/nfl_injury_timestamp_diagnostics.json
