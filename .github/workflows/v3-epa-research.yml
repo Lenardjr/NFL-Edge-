@@ -78,6 +78,9 @@ jobs:
           test -s research_outputs/nfl_kickoff_reference_summary.json
           python -m research.injury_release_schema_audit --seasons 2024 2025 --output research_outputs/nfl_injury_release_schema_audit.json
           test -s research_outputs/nfl_injury_release_schema_audit.json
+          python -m research.injury_timing_audit --kickoffs research_outputs/nfl_kickoff_reference.csv --seasons 2024 2025 --output-dir research_outputs
+          test -s research_outputs/nfl_injury_timing_join.csv
+          test -s research_outputs/nfl_injury_timing_summary.json
           python -m research.run_nfl_v6_rest --v3-predictions research_outputs/nfl_v3_predictions.csv --output-dir research_outputs
           test -s research_outputs/nfl_v6_rest_summary.json
           test -s research_outputs/nfl_v6_rest_predictions.csv
