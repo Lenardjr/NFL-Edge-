@@ -31,8 +31,8 @@ def audit(kickoffs:pd.DataFrame,injuries:pd.DataFrame):
     k["kickoff_parsed"]=k.kickoff_utc.map(parse_aware)
     if k.kickoff_parsed.isna().any():raise ValueError("Invalid timezone-aware kickoff")
     sides=pd.concat([
-        k[["game_id","season","week","home_team","kickoff_parsed"]].rename(columns={"home_team":"team"}).assign(side="home"),
-        k[["game_id","season","week","away_team","kickoff_parsed"]].rename(columns={"away_team":"team"}).assign(side="away")
+        k[["game_id","season","week","home_team","kickoff_utc","kickoff_parsed"]].rename(columns={"home_team":"team"}).assign(side="home"),
+        k[["game_id","season","week","away_team","kickoff_utc","kickoff_parsed"]].rename(columns={"away_team":"team"}).assign(side="away")
     ],ignore_index=True)
     if sides.duplicated(["season","week","team"]).any():
         raise ValueError("Ambiguous team-week schedule")
