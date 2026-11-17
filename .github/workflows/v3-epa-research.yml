@@ -62,6 +62,9 @@ jobs:
           test -s research_outputs/nfl_qb_documented_pregame_examples_summary.json
           python -m research.week18_audit --predictions research_outputs/nfl_v3_predictions.csv --output research_outputs/nfl_week18_audit.json
           test -s research_outputs/nfl_week18_audit.json
+          python -m research.market_incremental_benchmark --predictions research_outputs/nfl_v3_predictions.csv --output-dir research_outputs
+          test -s research_outputs/nfl_market_incremental_summary.json
+          test -s research_outputs/nfl_market_incremental_predictions.csv
           python -m research.run_nfl_v6_rest --v3-predictions research_outputs/nfl_v3_predictions.csv --output-dir research_outputs
           test -s research_outputs/nfl_v6_rest_summary.json
           test -s research_outputs/nfl_v6_rest_predictions.csv
