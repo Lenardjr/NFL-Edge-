@@ -25,7 +25,7 @@ def predict_upcoming(games,team_epa,*,asof_utc,now_utc,minimum_train=300):
     if required-set(g):raise ValueError("Missing required schedule fields")
     if g.game_id.isna().any() or g.game_id.duplicated().any():raise ValueError("Duplicate game IDs")
     g["gameday"]=pd.to_datetime(g.gameday,errors="raise")
-    g["kickoff_utc"]=g.kickoff_utc.map(utc)
+    # Historical completed games may lack a published kickoff clock time.\n    # They are used for training only; upcoming games require real kickoff.\n    g["kickoff_utc"]=g.kickoff_utc.map(lambda x: utc(x) if pd.notna(x) else pd.NaT)
     g["home_score"]=pd.to_numeric(g.home_score,errors="coerce")
     g["away_score"]=pd.to_numeric(g.away_score,errors="coerce")
     # We cannot prove when same-day final scores became available. Only use
