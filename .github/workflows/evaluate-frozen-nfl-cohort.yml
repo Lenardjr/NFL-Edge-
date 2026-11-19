@@ -20,13 +20,10 @@ jobs:
         run: pip install pandas numpy
       - name: Test outcome scoring logic
         run: python -m unittest research.test_score_frozen_cohort -v
-      - name: Download original Nov 19 cohort (never regenerate)
-        uses: actions/download-artifact@v4
-        with:
-          name: nfl-live-v3-research-snapshot
-          run-id: 44595866608
-          github-token: ${{ github.token }}
-          path: frozen_original
+      - name: Load archived Nov 19 cohort from research branch
+        run: |
+          mkdir -p frozen_original/next_slate
+          cp research/frozen_cohorts/2026-11-19-v3-15-games.csv frozen_original/next_slate/next_slate_v3_research.csv
       - name: Verify fixed cohort hash and count
         run: |
           python - <<'PY'
