@@ -1,0 +1,51 @@
+name: Evaluate Frozen NFL Research Cohort
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  prepare-fixed-cohort:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: research/model-validation-2026
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install evaluation dependencies
+        run: pip install pandas numpy
+      - name: Test outcome scoring logic
+        run: python -m unittest research.test_score_frozen_cohort -v
+      - name: Download original Nov 19 cohort (never regenerate)
+        uses: actions/download-artifact@v4
+        with:
+          name: nfl-live-v3-research-snapshot
+          run-id: 44595866608
+          github-token: ${{ github.token }}
+          path: frozen_original
+      - name: Verify fixed cohort hash and count
+        run: |
+          python - <<'PY'
+          import hashlib,pandas as pd
+          from pathlib import Path
+          path=Path("frozen_original/next_slate/next_slate_v3_research.csv")
+          expected="f836e4e17f7a0b5062e757e0faf7d346f748bfce6f878aaca88e5966bf93af41"
+          assert hashlib.sha256(path.read_bytes()).hexdigest()==expected, "Original cohort checksum mismatch"
+          assert len(pd.read_csv(path))==15, "Unexpected cohort size"
+          print("Original 15-game cohort verified; no predictions changed")
+          PY
+      - name: Prepare results template without scoring unfinished games
+        run: |
+          python -m research.prepare_cohort_outcomes \
+            --cohort frozen_original/next_slate/next_slate_v3_research.csv \
+            --output-dir research_outputs/cohort_evaluation
+          cp frozen_original/next_slate/next_slate_v3_research.csv research_outputs/cohort_evaluation/original_frozen_cohort.csv
+      - name: Upload fixed cohort and evaluation template
+        uses: actions/upload-artifact@v4
+        with:
+          name: nfl-nov19-frozen-cohort-evaluation
+          path: research_outputs/cohort_evaluation/
