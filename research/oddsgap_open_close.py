@@ -9,7 +9,7 @@ from pathlib import Path
 import pandas as pd
 
 REQUIRED={"sport","away","home","commence_time","market","side","book",
-          "earliest_ts","earliest_american_odds","close_ts","close_american_odds","game_id"}
+          "earliest_ts","earliest_american_odds","close_ts","close_american_odds"}
 def normalize(frame:pd.DataFrame):
     missing=REQUIRED-set(frame.columns)
     if missing:raise ValueError("Missing columns: "+",".join(sorted(missing)))
@@ -25,7 +25,7 @@ def normalize(frame:pd.DataFrame):
             t=pd.to_datetime(r[tcol],utc=True,errors="coerce")
             p=pd.to_numeric(r[pcol],errors="coerce")
             if pd.isna(t) or pd.isna(p) or t>=kickoff or p%1 or not (p<=-100 or p>=100):continue
-            rows.append({"game_id":r.game_id,"away":r.away,"home":r.home,
+            rows.append({"game_id":str(r.get("game_id") or (str(r.away)+"_at_"+str(r.home)+"_"+kickoff.strftime("%Y%m%d"))),"away":r.away,"home":r.home,
                          "commence_time_utc":kickoff.isoformat(),"market":r.market,
                          "side":r.side,"line":r.get("line"),"book":r.book,
                          "quote_phase":phase,"quote_timestamp_utc":t.isoformat(),
