@@ -1,0 +1,32 @@
+name: Live V3 pregame research snapshot
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  frozen-pregame-inference:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: research/model-validation-2026
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyarrow
+      - name: Run targeted integrity and integration tests
+        run: |
+          python -m unittest research.test_pregame_schedule_snapshot research.test_pregame_v3_bundle research.test_pregame_v3_integration research.test_upcoming_v3_inference research.test_run_upcoming_v3 -v
+      - name: Fetch public NFLverse snapshot and predict upcoming games
+        run: python -m research.run_public_pregame_v3 --output-dir research_outputs/live_v3
+      - name: Archive frozen data and research predictions
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nfl-live-v3-research-snapshot
+          path: research_outputs/live_v3/
+          if-no-files-found: warn
