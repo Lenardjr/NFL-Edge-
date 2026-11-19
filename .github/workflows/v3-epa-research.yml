@@ -124,6 +124,9 @@ jobs:
           python -m research.qb_evidence_cross_reference --priority research_outputs/nfl_2024_qb_priority_games.csv --evidence research_outputs/nfl_qb_documented_pregame_examples.csv --output-dir research_outputs
           test -s research_outputs/nfl_qb_documented_priority_cross_reference.csv
           test -s research_outputs/nfl_qb_documented_priority_cross_reference_summary.json
+          python -m research.qb_announcement_timeline --evidence research_outputs/nfl_qb_documented_priority_cross_reference.csv --kickoffs research_outputs/nfl_kickoff_reference.csv --output-dir research_outputs
+          test -s research_outputs/nfl_qb_announcement_decision_timeline.csv
+          test -s research_outputs/nfl_qb_announcement_decision_timeline_summary.json
           python -m research.run_nfl_v6_rest --v3-predictions research_outputs/nfl_v3_predictions.csv --output-dir research_outputs
           test -s research_outputs/nfl_v6_rest_summary.json
           test -s research_outputs/nfl_v6_rest_predictions.csv
