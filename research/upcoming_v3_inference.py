@@ -25,7 +25,9 @@ def predict_upcoming(games,team_epa,*,asof_utc,now_utc,minimum_train=300):
     if required-set(g):raise ValueError("Missing required schedule fields")
     if g.game_id.isna().any() or g.game_id.duplicated().any():raise ValueError("Duplicate game IDs")
     g["gameday"]=pd.to_datetime(g.gameday,errors="raise")
-    # Historical completed games may lack a published kickoff clock time.\n    # They are used for training only; upcoming games require real kickoff.\n    g["kickoff_utc"]=g.kickoff_utc.map(lambda x: utc(x) if pd.notna(x) else pd.NaT)
+    # Historical completed games may lack a published kickoff clock time.
+    # They are used for training only; upcoming games require real kickoff.
+    g["kickoff_utc"]=pd.to_datetime(g["kickoff_utc"],utc=True,errors="raise")
     g["home_score"]=pd.to_numeric(g.home_score,errors="coerce")
     g["away_score"]=pd.to_numeric(g.away_score,errors="coerce")
     # We cannot prove when same-day final scores became available. Only use
@@ -44,7 +46,7 @@ def predict_upcoming(games,team_epa,*,asof_utc,now_utc,minimum_train=300):
     train=f.loc[(f.gameday.dt.date<asof.date())&f.target_margin.notna()&
                 (f.home_games_prior>=2)&(f.away_games_prior>=2)]
     if len(train)<minimum_train:raise ValueError("Insufficient mature historical training games")
-    upcoming=f.loc[f.game_id.isin(g.loc[g.kickoff_utc>now,"game_id"])&
+    upcoming=f.loc[f.game_id.isin(g.loc[g.kickoff_utc>pd.Timestamp(now),"game_id"])&
                    f.target_margin.isna()&
                    (f.home_games_prior>=2)&(f.away_games_prior>=2)].copy()
     if upcoming.empty:raise ValueError("No eligible upcoming games")
