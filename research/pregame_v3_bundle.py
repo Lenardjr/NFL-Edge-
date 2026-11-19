@@ -11,6 +11,7 @@ from pathlib import Path
 import pandas as pd
 from research.pregame_schedule_snapshot import convert_schedule
 from research.run_upcoming_v3 import run
+from game_engine import TEAM_ALIASES
 
 def filter_pregame_epa(schedule:pd.DataFrame,team_epa:pd.DataFrame,*,asof_utc):
     cutoff=pd.Timestamp(asof_utc)
@@ -24,15 +25,25 @@ def filter_pregame_epa(schedule:pd.DataFrame,team_epa:pd.DataFrame,*,asof_utc):
     eligible=set(g.loc[done & (g.gameday.dt.date<cutoff.date()),"game_id"])
     t=team_epa.copy()
     if t.game_id.isna().any() or t.team.isna().any():raise ValueError("Missing EPA identity")
+    normalize=lambda value: TEAM_ALIASES.get(str(value),str(value))
+    t["team"]=t.team.map(normalize)
     if t.duplicated(["game_id","team"]).any():raise ValueError("Duplicate EPA team-game")
     if not set(t.game_id).issubset(eligible):
         raise ValueError("EPA contains uncompleted, same-day, or future games")
     # Each game needs exactly its two participating teams; partial EPA could
     # otherwise silently bias prior-game rolling metrics.
-    teams={r.game_id:{str(r.home_team),str(r.away_team)} for _,r in g.iterrows()}
+    teams={r.game_id:{normalize(r.home_team),normalize(r.away_team)} for _,r in g.iterrows()}
+    incomplete=[]
     for game_id,part in t.groupby("game_id"):
-        if set(part.team.astype(str))!=teams[game_id]:
-            raise ValueError("EPA missing team or includes nonparticipant")
+        present=set(part.team.astype(str))
+        if not present.issubset(teams[game_id]):
+            raise ValueError(f"EPA includes nonparticipant for game {game_id}: {sorted(present-teams[game_id])}")
+        if present!=teams[game_id]:
+            incomplete.append(game_id)
+    # Do not use one-sided play-by-play as complete game EPA. Removing both
+    # teams avoids injecting biased game-level information into prior rolls.
+    if incomplete:
+        t=t.loc[~t.game_id.isin(incomplete)].copy()
     return t
 
 def run_bundle(*,schedule_csv,epa_csv,output_dir,ledger=None,now_utc=None,minimum_train=300):
