@@ -39,12 +39,25 @@ def inspect_schema(schema:pd.DataFrame,extraction:pd.DataFrame):
                          "manual_semantics_required":True,"model_eligible":False})
     d=pd.DataFrame(rows,columns=["game_id","field","mapped_column","candidate_columns_json","mapping_status","manual_semantics_required","model_eligible"])
     counts=d.groupby(["field","mapping_status"]).size().to_dict() if len(d) else {}
+    column_counts={}
+    for item in schema.to_dict("records"):
+        if item["status"]!="schema_inspected":continue
+        try:
+            cols=json.loads(item["columns_json"])
+            if isinstance(cols,list):
+                for col in set(x for x in cols if isinstance(x,str)):
+                    column_counts[col]=column_counts.get(col,0)+1
+        except (ValueError,TypeError):
+            pass
+    schema_columns=[{"column":k,"files":v} for k,v in sorted(column_counts.items(),key=lambda x:(-x[1],x[0]))]
     s={"schema_files_inspected":int(schema.status.eq("schema_inspected").sum()),
        "extractor_files":int(extraction.status.eq("qb_rows_extracted").sum()),
        "field_checks":len(d),
        "potential_unmapped_aliases":int(d.mapping_status.eq("review_possible_alias").sum()),
        "no_obvious_column":int(d.mapping_status.eq("no_obvious_column").sum()),
        "mapping_counts":{str(k[0])+":"+str(k[1]):int(v) for k,v in counts.items()},
+       "observed_columns_by_file_count":schema_columns,
+       "unmapped_field_review":d.loc[d.mapping_status.ne("mapped"),["field","candidate_columns_json","mapping_status"]].drop_duplicates().to_dict("records"),
        "independently_verified":0,"model_eligible":0,
        "warning":"Column-name hints are not evidence of field meaning or historical availability. Manual review required before modifying mappings."}
     return d,s
