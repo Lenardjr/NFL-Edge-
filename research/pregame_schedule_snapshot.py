@@ -28,7 +28,7 @@ def convert_schedule(raw:pd.DataFrame,*,captured_at_utc,asof_utc):
         date=pd.Timestamp(r.gameday).strftime("%Y-%m-%d")
         stamp=pd.Timestamp(date+" "+str(r.gametime)).tz_localize(EASTERN,ambiguous="raise",nonexistent="raise")
         return stamp.tz_convert("UTC").isoformat()
-    g["kickoff_utc"]=g.apply(kickoff,axis=1)
+    # Exclude undated kickoff rows only if they are not already completed.\n    # Completed games without kickoff times remain in the historical feature\n    # timeline; their kickoff_utc is blank because no time is invented.\n    def optional_kickoff(r):\n        if pd.isna(r.gametime) or not str(r.gametime).strip():\n            return None\n        return kickoff(r)\n    g["kickoff_utc"]=g.apply(optional_kickoff,axis=1)
     g["home_score"]=pd.to_numeric(g.home_score,errors="coerce")
     g["away_score"]=pd.to_numeric(g.away_score,errors="coerce")
     if (g.home_score.notna()!=g.away_score.notna()).any():
