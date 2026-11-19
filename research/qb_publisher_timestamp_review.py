@@ -8,6 +8,7 @@ from pathlib import Path
 import pandas as pd
 
 SOURCES=[
+ {"game_id":"2024_18_KC_DEN","side":"away","publisher":"Associated Press via ClickOnDetroit","publisher_displayed_at":"2025-01-01 02:01 PM","publisher_timezone":"America/Detroit","source_url":"https://www.clickondetroit.com/sports/2025/01/01/chiefs-to-start-carson-wentz-at-qb-against-denver-which-would-clinch-a-playoff-berth-with-a-win/","qb_name":"Carson Wentz"},
  {"game_id":"2023_18_PIT_BAL","side":"home","publisher":"Baltimore Ravens","publisher_displayed_at":"2024-01-03 03:42 PM","publisher_timezone":"America/New_York","source_url":"https://www.baltimoreravens.com/news/lamar-jackson-won-t-play-vs-steelers","qb_name":"Tyler Huntley"},
  {"game_id":"2024_18_SEA_LA","side":"home","publisher":"Los Angeles Rams","publisher_displayed_at":"2025-01-01 01:42 PM","publisher_timezone":"America/Los_Angeles","source_url":"https://www.therams.com/news/rams-jimmy-garoppolo-to-start-at-quarterback-week-18-seahawks","qb_name":"Jimmy Garoppolo"},
 ]
