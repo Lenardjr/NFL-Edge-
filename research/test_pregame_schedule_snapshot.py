@@ -20,8 +20,16 @@ class ScheduleSnapshotTests(unittest.TestCase):
             convert_schedule(self.g,**self.kw)
     def test_reject_missing_time(self):
         self.g.loc[0,"gametime"]=None
-        with self.assertRaisesRegex(ValueError,"Missing gametime"):
-            convert_schedule(self.g,**self.kw)
+        x=convert_schedule(self.g,**self.kw)
+        self.assertTrue(x.empty)
+    def test_completed_historical_missing_time_is_retained(self):
+        self.g.loc[0,"gameday"]="2026-11-15"
+        self.g.loc[0,"gametime"]=None
+        self.g.loc[0,"home_score"]=24
+        self.g.loc[0,"away_score"]=17
+        x=convert_schedule(self.g,**self.kw)
+        self.assertEqual(len(x),1)
+        self.assertTrue(pd.isna(x.kickoff_utc.iloc[0]))
     def test_suppress_same_day_score(self):
         self.g.loc[0,"gameday"]="2026-11-19"
         self.g.loc[0,"home_score"]=24;self.g.loc[0,"away_score"]=10
