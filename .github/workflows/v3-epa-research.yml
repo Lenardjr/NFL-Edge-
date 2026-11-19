@@ -19,7 +19,7 @@ jobs:
         run: |
           pip install -r requirements.txt
           pip install pyarrow pyreadr
-      # Prospective prediction ledger guardrails are included in unittest discovery.
+      # Prospective ledger and upcoming V3 inference guardrails are included in unittest discovery.
       - name: Test feature and full-model temporal invariance
         run: python -m unittest discover -s research -p 'test_*.py' -v
       - name: Download and evaluate 2018-2026 EPA
