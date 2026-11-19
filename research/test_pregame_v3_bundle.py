@@ -19,9 +19,18 @@ class PregameBundleTests(unittest.TestCase):
             self.check()
     def test_partial_team_game_rejected(self):
         self.e=self.e.iloc[:1]
-        with self.assertRaisesRegex(ValueError,"missing team"):
-            self.check()
+        self.assertTrue(self.check().empty)
     def test_unfinished_prior_game_rejected(self):
         self.g.loc[0,"home_score"]=None
         with self.assertRaisesRegex(ValueError,"uncompleted"):
+            self.check()
+
+    def test_historical_team_alias_normalized(self):
+        self.g.loc[0,"home_team"]="LAR"
+        self.e.loc[self.e.team=="CHI","team"]="LA"
+        x=self.check()
+        self.assertEqual(set(x.team),{"LAR","NYJ"})
+    def test_nonparticipant_still_rejected(self):
+        self.e.loc[self.e.team=="CHI","team"]="BUF"
+        with self.assertRaisesRegex(ValueError,"nonparticipant"):
             self.check()
