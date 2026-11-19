@@ -19,7 +19,7 @@ jobs:
         run: |
           pip install -r requirements.txt
           pip install pyarrow pyreadr
-      # Prospective ledger, upcoming inference, and feature research gates are tested.
+      # Prospective ledger, upcoming inference, frozen runner, and feature research gates are tested.
       - name: Test feature and full-model temporal invariance
         run: python -m unittest discover -s research -p 'test_*.py' -v
       - name: Download and evaluate 2018-2026 EPA
