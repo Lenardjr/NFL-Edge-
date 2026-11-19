@@ -1,0 +1,34 @@
+name: Launch Live V3 Research (isolated)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  run-research-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout research branch only
+        uses: actions/checkout@v4
+        with:
+          ref: research/model-validation-2026
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install research dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyarrow
+      - name: Verify research pipeline integration
+        run: |
+          python -m unittest research.test_pregame_schedule_snapshot research.test_pregame_v3_bundle research.test_pregame_v3_integration research.test_run_upcoming_v3 -v
+      - name: Run public NFL pregame snapshot
+        run: python -m research.run_public_pregame_v3 --output-dir research_outputs/live_v3
+      - name: Upload research outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nfl-live-v3-research-snapshot
+          path: research_outputs/live_v3/
+          if-no-files-found: warn
