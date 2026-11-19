@@ -133,6 +133,9 @@ jobs:
           python -m research.qb_historical_odds_requests --review research_outputs/nfl_qb_publisher_timestamp_review.csv --output-dir research_outputs
           test -s research_outputs/nfl_qb_historical_odds_request_manifest.csv
           test -s research_outputs/nfl_qb_historical_odds_request_summary.json
+          python -m research.historical_odds_request_plan --manifest research_outputs/nfl_qb_historical_odds_request_manifest.csv --output-dir research_outputs
+          test -s research_outputs/nfl_historical_odds_provider_request_plan.csv
+          test -s research_outputs/nfl_historical_odds_provider_request_summary.json
           # Historical odds importer is unit-tested offline; no API key or unverified quote enters modeling.
           # Recheck dated AP publication lead for Kansas City Week 18 QB change
           python -m research.run_nfl_v6_rest --v3-predictions research_outputs/nfl_v3_predictions.csv --output-dir research_outputs
