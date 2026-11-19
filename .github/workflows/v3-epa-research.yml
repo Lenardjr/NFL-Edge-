@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/v3-epa-research.yml'
   workflow_dispatch:
+      # Pregame schedule and completed-game EPA bundle integrity tests included.
 jobs:
   backtest:
     runs-on: ubuntu-latest
