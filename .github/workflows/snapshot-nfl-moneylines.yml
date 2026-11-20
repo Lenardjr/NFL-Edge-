@@ -1,0 +1,45 @@
+name: Snapshot NFL Research Moneylines
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */6 * * *'
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: research/model-validation-2026
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install research dependencies
+        run: pip install pandas numpy
+      - name: Test moneyline snapshot logic
+        run: python -m unittest research.test_snapshot_nfl_odds -v
+      - name: Verify fixed cohort integrity
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib,pandas as pd
+          p=Path("research/frozen_cohorts/2026-11-19-v3-15-games.csv")
+          assert hashlib.sha256(p.read_bytes()).hexdigest()=="f836e4e17f7a0b5062e757e0faf7d346f748bfce6f878aaca88e5966bf93af41"
+          assert len(pd.read_csv(p))==15
+          PY
+      - name: Collect timestamped sportsbook moneylines
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+        run: |
+          python -m research.snapshot_nfl_odds \
+            --cohort research/frozen_cohorts/2026-11-19-v3-15-games.csv \
+            --output-dir research_outputs/odds_snapshots
+      - name: Upload immutable run artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nfl-research-moneylines-${{ github.run_id }}
+          path: research_outputs/odds_snapshots/
+          retention-days: 90
