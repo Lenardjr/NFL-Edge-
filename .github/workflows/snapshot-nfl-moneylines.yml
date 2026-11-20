@@ -5,6 +5,8 @@ on:
     - cron: '0 */6 * * *'
 permissions:
   contents: read
+  pages: write
+  id-token: write
 jobs:
   snapshot:
     runs-on: ubuntu-latest
@@ -41,9 +43,28 @@ jobs:
         run: |
           python -m research.market_disagreement_report \
             --snapshot-dir research_outputs/odds_snapshots
+      - name: Build mobile-friendly dashboard
+        run: |
+          python -m research.build_edge_dashboard \
+            --snapshot-dir research_outputs/odds_snapshots \
+            --output-dir research_outputs/site
+      - name: Upload GitHub Pages site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: research_outputs/site
       - name: Upload immutable run artifact
         uses: actions/upload-artifact@v4
         with:
           name: nfl-research-moneylines-${{ github.run_id }}
           path: research_outputs/odds_snapshots/
           retention-days: 90
+  deploy:
+    needs: snapshot
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy research dashboard to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
