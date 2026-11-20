@@ -28,6 +28,21 @@ def build(snapshot_dir,output_dir):
           "best_away_moneyline":int(g.loc[g.away_ev_per_unit.idxmax(),"away_moneyline_american"]),
           "best_home_book":str(g.loc[g.home_ev_per_unit.idxmax(),"sportsbook_title"]),
           "best_away_book":str(g.loc[g.away_ev_per_unit.idxmax(),"sportsbook_title"])})
+    extras=sorted(src.glob("spread_total_snapshot_*.csv"))
+    additional=pd.read_csv(extras[-1]) if extras else pd.DataFrame()
+    for item in games:
+        item["spread_quotes"]=[]
+        item["total_quotes"]=[]
+        if additional.empty:continue
+        subset=additional.loc[additional.game_id==item["id"]].copy()
+        if subset.empty:continue
+        now=pd.to_datetime(subset.retrieved_at_utc,utc=True,errors="coerce")
+        updated=pd.to_datetime(subset.market_last_update_utc,utc=True,errors="coerce")
+        subset=subset.loc[updated.notna()&(updated<=now)&((now-updated)<=pd.Timedelta(minutes=90))]
+        for kind,target in (("spreads","spread_quotes"),("totals","total_quotes")):
+            rows=subset.loc[subset.market==kind]
+            item[target]=[{"book":str(x.sportsbook_title),"selection":str(x.selection),
+               "line":float(x.point),"odds":int(x.american_odds)} for x in rows.itertuples(index=False)]
     data={"updated_at":generated,"games":games,"note":"Frozen research probabilities; sportsbook quotes are snapshots, not live executable prices. No betting recommendation."}
     (out/"data.json").write_text(json.dumps(data,indent=2))
     page='''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -69,7 +84,16 @@ fetch('data.json',{cache:'no-store'}).then(r=>{if(!r.ok)throw Error('Data unavai
  document.getElementById('games').innerHTML=games.map(g=>{
  const home=g.home_probability>=.5,team=home?g.home:g.away,prob=home?g.home_probability:1-g.home_probability;
  const m=g.market_home_probability,delta=m===null?null:(g.home_probability-m)*100;
- return '<article class="game"><small>'+esc(when(g.kickoff))+' · '+esc(g.fresh_books)+' fresh books</small><div class="match">'+esc(g.away)+' @ '+esc(g.home)+'</div><small>EDGE PROJECTED WINNER</small><h2>'+esc(team)+' · '+pct(prob)+'</h2><div class="bar"><span style="width:'+Math.round(g.home_probability*100)+'%"></span></div><div class="grid"><div class="metric"><small>Edge · home</small><b>'+pct(g.home_probability)+'</b></div><div class="metric"><small>Market · home</small><b>'+(m===null?'Unavailable':pct(m))+'</b></div></div><div class="delta '+(delta!==null&&Math.abs(delta)>=15?'warn':'good')+'">'+(delta===null?'Not enough fresh quotes':'Edge minus market (home): '+(delta>0?'+':'')+delta.toFixed(1)+' pts')+'</div></article>';
+ const lines=(arr,kind)=>{
+   if(!arr?.length)return '<small>No fresh '+kind+' quotes available</small>';
+   const byBook={};
+   for(const x of arr){if(!byBook[x.book])byBook[x.book]=[];byBook[x.book].push(x);}
+   return Object.entries(byBook).slice(0,4).map(([book,quotes])=>
+     '<div style="padding:8px 0;border-bottom:1px solid #293a52"><small>'+esc(book)+'</small><div>'+
+     quotes.map(x=>esc(x.selection)+' '+(x.line>0?'+':'')+x.line+' ('+(x.odds>0?'+':'')+x.odds+')').join(' · ')+'</div></div>').join('');
+ };
+
+ return '<article class="game"><small>'+esc(when(g.kickoff))+' · '+esc(g.fresh_books)+' fresh books</small><div class="match">'+esc(g.away)+' @ '+esc(g.home)+'</div><small>EDGE PROJECTED WINNER</small><h2>'+esc(team)+' · '+pct(prob)+'</h2><div class="bar"><span style="width:'+Math.round(g.home_probability*100)+'%"></span></div><div class="grid"><div class="metric"><small>Edge · home</small><b>'+pct(g.home_probability)+'</b></div><div class="metric"><small>Market · home</small><b>'+(m===null?'Unavailable':pct(m))+'</b></div></div><div class="delta '+(delta!==null&&Math.abs(delta)>=15?'warn':'good')+'">'+(delta===null?'Not enough fresh quotes':'Edge minus market (home): '+(delta>0?'+':'')+delta.toFixed(1)+' pts')+'</div><details style="margin-top:16px"><summary style="cursor:pointer;font-weight:650">Point spreads &amp; over/under</summary><div style="margin-top:12px"><b>Point spreads</b>'+lines(g.spread_quotes,'spread')+'<div style="margin-top:12px"><b>Game totals (O/U)</b>'+lines(g.total_quotes,'total')+'</div><small style="display:block;margin-top:12px">Sportsbook lines only. NFL Edge has not validated spread or total probabilities.</small></div></details></article>';
  }).join('');
 }).catch(e=>document.getElementById('games').textContent='Unable to load the current research snapshot.');
 </script></body></html>'''
