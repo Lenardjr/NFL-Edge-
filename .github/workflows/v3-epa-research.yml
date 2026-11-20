@@ -1,0 +1,153 @@
+name: V3 EPA historical research
+on:
+  push:
+    branches:
+      - research/model-validation-2026
+    paths:
+      - '.github/workflows/v3-epa-research.yml'
+  workflow_dispatch:
+      # Pregame schedule and completed-game EPA bundle integrity tests included.
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install research dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyarrow pyreadr
+      # Prospective ledger, schedule snapshots, full synthetic inference integration, and feature gates are tested.
+      - name: Test feature and full-model temporal invariance
+        run: python -m unittest discover -s research -p 'test_*.py' -v
+      - name: Download and evaluate 2018-2026 EPA
+        run: |
+          python -m research.run_nfl_v3 --output-dir research_outputs
+          test -s research_outputs/nfl_v3_summary.json
+          test -s research_outputs/nfl_v3_predictions.csv
+          python -m research.model_integrity_audit --predictions research_outputs/nfl_v3_predictions.csv --output research_outputs/nfl_integrity_audit.json
+          test -s research_outputs/nfl_integrity_audit.json
+          python -m research.compare_v3 --predictions research_outputs/nfl_v3_predictions.csv --output research_outputs/nfl_v3_comparison.json
+          test -s research_outputs/nfl_v3_comparison.json
+          python -m research.run_nfl_v4_market --predictions research_outputs/nfl_v3_predictions.csv --output-dir research_outputs
+          test -s research_outputs/nfl_v4_market_summary.json
+          test -s research_outputs/nfl_v4_market_predictions.csv
+          python -m research.v5_diagnostics --predictions research_outputs/nfl_v3_predictions.csv --output research_outputs/nfl_v5_diagnostics.json
+          test -s research_outputs/nfl_v5_diagnostics.json
+          python -m research.v5_calibration_audit --predictions research_outputs/nfl_v3_predictions.csv --output research_outputs/nfl_v5_calibration_audit.json
+          test -s research_outputs/nfl_v5_calibration_audit.json
+          python -m research.v5_extreme_cases --predictions research_outputs/nfl_v3_predictions.csv --output-dir research_outputs
+          test -s research_outputs/nfl_v5_extreme_case_review.csv
+          test -s research_outputs/nfl_v5_extreme_case_summary.json
+          python -m research.v5_matchup_enrichment --cases research_outputs/nfl_v5_extreme_case_review.csv --output-dir research_outputs
+          test -s research_outputs/nfl_v5_extreme_cases_with_matchups.csv
+          test -s research_outputs/nfl_v5_matchup_enrichment_summary.json
+          python -m research.v5_rest_comparison --predictions research_outputs/nfl_v3_predictions.csv --output research_outputs/nfl_v5_rest_comparison.json
+          test -s research_outputs/nfl_v5_rest_comparison.json
+          python -m research.v5_pregame_research_queue --cases research_outputs/nfl_v5_extreme_cases_with_matchups.csv --output-dir research_outputs
+          test -s research_outputs/nfl_v5_extreme_pregame_research_queue.csv
+          test -s research_outputs/nfl_v5_extreme_pregame_queue_summary.json
+          python -m research.qb_provenance_audit --cases research_outputs/nfl_v5_extreme_cases_with_matchups.csv --output-dir research_outputs
+          test -s research_outputs/nfl_qb_pregame_verification_queue.csv
+          test -s research_outputs/nfl_qb_provenance_summary.json
+          python -m research.qb_retrospective_reference --queue research_outputs/nfl_qb_pregame_verification_queue.csv --output-dir research_outputs
+          test -s research_outputs/nfl_qb_retrospective_reference.csv
+          test -s research_outputs/nfl_qb_reference_coverage.json
+          python -m research.qb_priority_review --output-dir research_outputs
+          test -s research_outputs/nfl_qb_priority_source_review.csv
+          test -s research_outputs/nfl_qb_priority_source_summary.json
+          python -m research.qb_documented_examples
+          test -s research_outputs/nfl_qb_documented_pregame_examples.csv
+          test -s research_outputs/nfl_qb_documented_pregame_examples_summary.json
+          python -m research.week18_audit --predictions research_outputs/nfl_v3_predictions.csv --output research_outputs/nfl_week18_audit.json
+          test -s research_outputs/nfl_week18_audit.json
+          python -m research.market_incremental_benchmark --predictions research_outputs/nfl_v3_predictions.csv --output-dir research_outputs
+          test -s research_outputs/nfl_market_incremental_summary.json
+          test -s research_outputs/nfl_market_incremental_predictions.csv
+          python -m research.market_incremental_uncertainty --predictions research_outputs/nfl_market_incremental_predictions.csv --output research_outputs/nfl_market_incremental_uncertainty.json
+          test -s research_outputs/nfl_market_incremental_uncertainty.json
+          python -m research.market_incremental_gap_diagnostics --predictions research_outputs/nfl_market_incremental_predictions.csv --original research_outputs/nfl_v3_predictions.csv --output research_outputs/nfl_market_incremental_gap_diagnostics.json
+          test -s research_outputs/nfl_market_incremental_gap_diagnostics.json
+          python -m research.pregame_quote_gate --output-dir research_outputs
+          test -s research_outputs/nfl_pregame_quote_readiness.json
+          python -m research.data_source_readiness --output research_outputs/nfl_data_source_readiness.json
+          test -s research_outputs/nfl_data_source_readiness.json
+          python -m research.kickoff_reference --predictions research_outputs/nfl_v3_predictions.csv --output-dir research_outputs
+          test -s research_outputs/nfl_kickoff_reference.csv
+          test -s research_outputs/nfl_kickoff_reference_summary.json
+          python -m research.injury_release_schema_audit --seasons 2024 2025 --output research_outputs/nfl_injury_release_schema_audit.json
+          test -s research_outputs/nfl_injury_release_schema_audit.json
+          python -m research.injury_timing_audit --kickoffs research_outputs/nfl_kickoff_reference.csv --seasons 2024 2025 --output-dir research_outputs
+          test -s research_outputs/nfl_injury_timing_join.csv
+          python -c "import pandas as pd; d=pd.read_csv('research_outputs/nfl_injury_timing_join.csv',nrows=1); assert 'kickoff_utc' in d.columns, 'kickoff_utc missing from injury join'"
+          test -s research_outputs/nfl_injury_timing_summary.json
+          python -m research.injury_timestamp_diagnostics --joined research_outputs/nfl_injury_timing_join.csv --output research_outputs/nfl_injury_timestamp_diagnostics.json
+          test -s research_outputs/nfl_injury_timestamp_diagnostics.json
+          python -m research.injury_2024_priority_audit --joined research_outputs/nfl_injury_timing_join.csv --extreme research_outputs/nfl_v5_extreme_case_review.csv --output-dir research_outputs
+          test -s research_outputs/nfl_2024_injury_leadtime_audit.json
+          test -f research_outputs/nfl_2024_qb_extreme_injury_review.csv
+          python -m research.injury_qb_source_queue --review research_outputs/nfl_2024_qb_extreme_injury_review.csv --output-dir research_outputs
+          test -f research_outputs/nfl_2024_qb_source_verification_queue.csv
+          test -s research_outputs/nfl_2024_qb_source_verification_summary.json
+          python -m research.injury_qb_priority --queue research_outputs/nfl_2024_qb_source_verification_queue.csv --cases research_outputs/nfl_v5_extreme_case_review.csv --limit 20 --output-dir research_outputs
+          test -s research_outputs/nfl_2024_qb_priority_games.csv
+          test -s research_outputs/nfl_2024_qb_priority_summary.json
+          python -m research.injury_source_provenance --priority research_outputs/nfl_2024_qb_priority_games.csv --output-dir research_outputs
+          test -s research_outputs/nfl_2024_qb_provenance_investigation.csv
+          test -s research_outputs/nfl_2024_qb_provenance_readiness.json
+          python -m research.injury_asset_metadata --priority research_outputs/nfl_2024_qb_priority_games.csv --output-dir research_outputs
+          test -s research_outputs/nfl_2024_qb_asset_metadata.csv
+          test -s research_outputs/nfl_2024_qb_asset_metadata_summary.json
+          python -m research.injury_asset_kickoff --assets research_outputs/nfl_2024_qb_asset_metadata.csv --qb-queue research_outputs/nfl_2024_qb_source_verification_queue.csv --output-dir research_outputs
+          test -s research_outputs/nfl_2024_qb_asset_kickoff_timing.csv
+          test -s research_outputs/nfl_2024_qb_asset_kickoff_timing_summary.json
+          python -m research.injury_asset_fingerprint --assets research_outputs/nfl_2024_qb_asset_kickoff_timing.csv --output-dir research_outputs
+          test -s research_outputs/nfl_2024_qb_asset_fingerprints.csv
+          test -s research_outputs/nfl_2024_qb_asset_fingerprint_summary.json
+          python -m research.injury_rds_schema --assets research_outputs/nfl_2024_qb_asset_kickoff_timing.csv --output-dir research_outputs
+          test -s research_outputs/nfl_2024_qb_rds_schema.csv
+          test -s research_outputs/nfl_2024_qb_rds_schema_summary.json
+          python -m research.injury_qb_rds_inventory --assets research_outputs/nfl_2024_qb_asset_kickoff_timing.csv --output-dir research_outputs
+          test -s research_outputs/nfl_2024_qb_rds_candidate_inventory.csv
+          test -s research_outputs/nfl_2024_qb_rds_candidate_summary.json
+          python -m research.injury_qb_rds_extract --assets research_outputs/nfl_2024_qb_asset_kickoff_timing.csv --output-dir research_outputs
+          test -s research_outputs/nfl_2024_qb_rds_extracted_candidates.csv
+          test -s research_outputs/nfl_2024_qb_rds_extraction_audit.csv
+          test -s research_outputs/nfl_2024_qb_rds_extraction_summary.json
+          python -m research.injury_qb_record_audit --candidates research_outputs/nfl_2024_qb_rds_extracted_candidates.csv --timing research_outputs/nfl_2024_qb_asset_kickoff_timing.csv --output-dir research_outputs
+          test -s research_outputs/nfl_2024_qb_rds_record_audit.csv
+          test -s research_outputs/nfl_2024_qb_rds_record_audit_summary.json
+          python -m research.injury_qb_schema_mapping --schema research_outputs/nfl_2024_qb_rds_schema.csv --extraction research_outputs/nfl_2024_qb_rds_extraction_audit.csv --output-dir research_outputs
+          test -s research_outputs/nfl_2024_qb_rds_field_mapping_review.csv
+          test -s research_outputs/nfl_2024_qb_rds_field_mapping_summary.json
+          python -m research.qb_evidence_cross_reference --priority research_outputs/nfl_2024_qb_priority_games.csv --evidence research_outputs/nfl_qb_documented_pregame_examples.csv --output-dir research_outputs
+          test -s research_outputs/nfl_qb_documented_priority_cross_reference.csv
+          test -s research_outputs/nfl_qb_documented_priority_cross_reference_summary.json
+          python -m research.qb_announcement_timeline --evidence research_outputs/nfl_qb_documented_priority_cross_reference.csv --kickoffs research_outputs/nfl_kickoff_reference.csv --output-dir research_outputs
+          test -s research_outputs/nfl_qb_announcement_decision_timeline.csv
+          test -s research_outputs/nfl_qb_announcement_decision_timeline_summary.json
+          python -m research.qb_publisher_timestamp_review --timeline research_outputs/nfl_qb_announcement_decision_timeline.csv --output-dir research_outputs
+          test -s research_outputs/nfl_qb_publisher_timestamp_review.csv
+          test -s research_outputs/nfl_qb_publisher_timestamp_review_summary.json
+          python -m research.qb_historical_odds_requests --review research_outputs/nfl_qb_publisher_timestamp_review.csv --output-dir research_outputs
+          test -s research_outputs/nfl_qb_historical_odds_request_manifest.csv
+          test -s research_outputs/nfl_qb_historical_odds_request_summary.json
+          python -m research.historical_odds_request_plan --manifest research_outputs/nfl_qb_historical_odds_request_manifest.csv --output-dir research_outputs
+          test -s research_outputs/nfl_historical_odds_provider_request_plan.csv
+          test -s research_outputs/nfl_historical_odds_provider_request_summary.json
+          # Odds Gap XLSX import is exercised by unit tests; uploaded samples stay outside GitHub.
+          # Historical odds importer is unit-tested offline; no API key or unverified quote enters modeling.
+          # Recheck dated AP publication lead for Kansas City Week 18 QB change
+          python -m research.run_nfl_v6_rest --v3-predictions research_outputs/nfl_v3_predictions.csv --output-dir research_outputs
+          test -s research_outputs/nfl_v6_rest_summary.json
+          test -s research_outputs/nfl_v6_rest_predictions.csv
+      - name: Archive V3 results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nfl-v3-epa-research
+          path: research_outputs/
+          if-no-files-found: warn
