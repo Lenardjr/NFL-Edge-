@@ -69,12 +69,44 @@ def parse_snapshot(cohort,events,now):
                   "research_only":True})
     return pd.DataFrame(rows)
 
+def parse_additional_markets(cohort,events,now):
+    """Store sourced spread/total lines only; no unvalidated model edge."""
+    rows=[]
+    for p in cohort.itertuples(index=False):
+        kick=pd.Timestamp(p.kickoff_utc)
+        if pd.Timestamp(now)>=kick:continue
+        home=TEAMS[normalize(p.home_team)];away=TEAMS[normalize(p.away_team)]
+        matches=[e for e in events if e.get("home_team")==home and e.get("away_team")==away
+                 and abs(pd.Timestamp(e["commence_time"])-kick)<=pd.Timedelta(hours=24)]
+        if len(matches)!=1:continue
+        for book in matches[0].get("bookmakers",[]):
+            for market in book.get("markets",[]):
+                kind=market.get("key")
+                if kind not in ("spreads","totals"):continue
+                outcomes=market.get("outcomes",[])
+                expected={home,away} if kind=="spreads" else {"Over","Under"}
+                if len(outcomes)!=2 or {o.get("name") for o in outcomes}!=expected:continue
+                for o in outcomes:
+                    try:
+                        point=float(o["point"]);price=float(o["price"])
+                        if not (-1000<point<1000) or price==0:continue
+                    except (KeyError,TypeError,ValueError):continue
+                    rows.append({"game_id":p.game_id,"kickoff_utc":p.kickoff_utc,
+                        "home_team":p.home_team,"away_team":p.away_team,
+                        "sportsbook":book.get("key",""),"sportsbook_title":book.get("title",""),
+                        "market":kind,"selection":o["name"],"point":point,"american_odds":price,
+                        "market_last_update_utc":market.get("last_update",book.get("last_update","")),
+                        "retrieved_at_utc":pd.Timestamp(now).isoformat(),
+                        "model_cover_probability":None,"model_total_probability":None,
+                        "edge_validated":False})
+    return pd.DataFrame(rows)
+
 def collect(cohort_path,output_dir):
     key=os.environ.get("ODDS_API_KEY")
     if not key:raise RuntimeError("ODDS_API_KEY GitHub Actions secret is missing")
     raw=Path(cohort_path).read_bytes();cohort=pd.read_csv(cohort_path)
     now=pd.Timestamp(datetime.datetime.now(datetime.timezone.utc))
-    params=urllib.parse.urlencode({"apiKey":key,"regions":"us","markets":"h2h",
+    params=urllib.parse.urlencode({"apiKey":key,"regions":"us","markets":"h2h,spreads,totals",
                                     "oddsFormat":"american","dateFormat":"iso"})
     req=urllib.request.Request(BASE+"?"+params,headers={"User-Agent":"NFL-Edge-research/1.0"})
     with urllib.request.urlopen(req,timeout=30) as response:
@@ -82,14 +114,14 @@ def collect(cohort_path,output_dir):
         quota={k:response.headers.get(k) for k in ("x-requests-remaining","x-requests-used","x-requests-last")}
     events=json.loads(body)
     if not isinstance(events,list):raise ValueError("Unexpected odds API response")
-    rows=parse_snapshot(cohort,events,now)
+    rows=parse_snapshot(cohort,events,now)\n    additional=parse_additional_markets(cohort,events,now)
     out=Path(output_dir);out.mkdir(parents=True,exist_ok=True)
     stamp=now.strftime("%Y%m%dT%H%M%S%fZ")
-    rows.to_csv(out/("moneyline_snapshot_"+stamp+".csv"),index=False)
+    rows.to_csv(out/("moneyline_snapshot_"+stamp+".csv"),index=False)\n    additional.to_csv(out/("spread_total_snapshot_"+stamp+".csv"),index=False)
     manifest={"retrieved_at_utc":now.isoformat(),"cohort_sha256":hashlib.sha256(raw).hexdigest(),
       "odds_response_sha256":hashlib.sha256(body).hexdigest(),
-      "source":"The Odds API v4 NFL US h2h American",
-      "matched_quotes":len(rows),"unique_games":int(rows.game_id.nunique()) if len(rows) else 0,
+      "source":"The Odds API v4 NFL US h2h, spreads, totals American",
+      "matched_quotes":len(rows),"spread_total_quotes":len(additional),"unique_games":int(rows.game_id.nunique()) if len(rows) else 0,
       "quota":quota,"key_redacted":True,"pregame_only":True,
       "note":"Model EV is hypothetical and uncalibrated; it does not establish profitable edge."}
     (out/("moneyline_manifest_"+stamp+".json")).write_text(json.dumps(manifest,indent=2))
