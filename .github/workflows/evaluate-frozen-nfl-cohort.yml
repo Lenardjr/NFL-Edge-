@@ -1,6 +1,8 @@
 name: Evaluate Frozen NFL Research Cohort
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '15 11 * * *'
 permissions:
   contents: read
   actions: read
@@ -19,7 +21,7 @@ jobs:
       - name: Install evaluation dependencies
         run: pip install pandas numpy
       - name: Test outcome scoring logic
-        run: python -m unittest research.test_score_frozen_cohort -v
+        run: python -m unittest research.test_score_frozen_cohort research.test_collect_cohort_scores -v
       - name: Load archived Nov 19 cohort from research branch
         run: |
           mkdir -p frozen_original/next_slate
@@ -41,6 +43,17 @@ jobs:
             --cohort frozen_original/next_slate/next_slate_v3_research.csv \
             --output-dir research_outputs/cohort_evaluation
           cp frozen_original/next_slate/next_slate_v3_research.csv research_outputs/cohort_evaluation/original_frozen_cohort.csv
+      - name: Fetch completed NFL results from public scoreboard
+        run: |
+          python -m research.collect_cohort_scores \
+            --cohort frozen_original/next_slate/next_slate_v3_research.csv \
+            --output-dir research_outputs/cohort_evaluation
+      - name: Score only verified completed games
+        run: |
+          python -m research.score_frozen_cohort \
+            --cohort frozen_original/next_slate/next_slate_v3_research.csv \
+            --results research_outputs/cohort_evaluation/cohort_verified_results.csv \
+            --output-dir research_outputs/cohort_evaluation
       - name: Upload fixed cohort and evaluation template
         uses: actions/upload-artifact@v4
         with:
