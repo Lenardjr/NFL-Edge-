@@ -20,7 +20,7 @@ jobs:
       - name: Install research dependencies
         run: pip install pandas numpy
       - name: Test moneyline snapshot logic
-        run: python -m unittest research.test_snapshot_nfl_odds -v
+        run: python -m unittest research.test_snapshot_nfl_odds research.test_market_disagreement_report -v
       - name: Verify fixed cohort integrity
         run: |
           python - <<'PY'
@@ -37,6 +37,10 @@ jobs:
           python -m research.snapshot_nfl_odds \
             --cohort research/frozen_cohorts/2026-11-19-v3-15-games.csv \
             --output-dir research_outputs/odds_snapshots
+      - name: Build freshness-filtered market disagreement report
+        run: |
+          python -m research.market_disagreement_report \
+            --snapshot-dir research_outputs/odds_snapshots
       - name: Upload immutable run artifact
         uses: actions/upload-artifact@v4
         with:
