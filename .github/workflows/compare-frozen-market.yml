@@ -1,0 +1,65 @@
+name: Compare Frozen NFL Model vs Market
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 12 * * *'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: research/model-validation-2026
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install research dependencies
+        run: pip install pandas numpy
+      - name: Run comparison tests
+        run: python -m unittest research.test_compare_frozen_market research.test_collect_cohort_scores -v
+      - name: Download original pregame odds snapshot
+        uses: actions/download-artifact@v4
+        with:
+          name: nfl-research-moneylines-44789837947
+          run-id: 44789837947
+          github-token: ${{ github.token }}
+          path: original_pregame_market
+      - name: Verify frozen cohort and archived quote manifest
+        run: |
+          python - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          p=Path("research/frozen_cohorts/2026-11-19-v3-15-games.csv")
+          assert hashlib.sha256(p.read_bytes()).hexdigest()=="f836e4e17f7a0b5062e757e0faf7d346f748bfce6f878aaca88e5966bf93af41"
+          manifest=list(Path("original_pregame_market").glob("moneyline_manifest_*.json"))
+          assert len(manifest)==1, "Expected exactly one original market manifest"
+          data=json.loads(manifest[0].read_text())
+          assert data["cohort_sha256"]==hashlib.sha256(p.read_bytes()).hexdigest()
+          assert data["pregame_only"] is True
+          assert len(list(Path("original_pregame_market").glob("moneyline_snapshot_*.csv")))==1
+          PY
+      - name: Fetch completed results without changing predictions
+        run: |
+          python -m research.collect_cohort_scores \
+            --cohort research/frozen_cohorts/2026-11-19-v3-15-games.csv \
+            --output-dir research_outputs/paired_evaluation
+      - name: Score paired pregame model and sportsbook probabilities
+        run: |
+          python -m research.compare_frozen_market \
+            --cohort research/frozen_cohorts/2026-11-19-v3-15-games.csv \
+            --results research_outputs/paired_evaluation/cohort_verified_results.csv \
+            --quotes original_pregame_market/moneyline_snapshot_*.csv \
+            --output-dir research_outputs/paired_evaluation
+      - name: Preserve original market snapshot provenance
+        run: cp original_pregame_market/moneyline_manifest_*.json research_outputs/paired_evaluation/
+      - name: Upload paired evaluation
+        uses: actions/upload-artifact@v4
+        with:
+          name: nfl-model-vs-market-${{ github.run_id }}
+          path: research_outputs/paired_evaluation/
+          retention-days: 90
