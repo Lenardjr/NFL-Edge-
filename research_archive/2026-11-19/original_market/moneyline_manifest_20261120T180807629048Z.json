@@ -1,0 +1,16 @@
+{
+  "retrieved_at_utc": "2026-11-20T18:08:07.629048+00:00",
+  "cohort_sha256": "f836e4e17f7a0b5062e757e0faf7d346f748bfce6f878aaca88e5966bf93af41",
+  "odds_response_sha256": "d06fa8ee8892a92850ccacd6e4db85e181b4589685458506955fb14291c3efad",
+  "source": "The Odds API v4 NFL US h2h American",
+  "matched_quotes": 114,
+  "unique_games": 14,
+  "quota": {
+    "x-requests-remaining": "497",
+    "x-requests-used": "3",
+    "x-requests-last": "1"
+  },
+  "key_redacted": true,
+  "pregame_only": true,
+  "note": "Model EV is hypothetical and uncalibrated; it does not establish profitable edge."
+}
