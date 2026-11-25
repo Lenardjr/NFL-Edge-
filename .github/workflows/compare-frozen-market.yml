@@ -4,8 +4,11 @@ on:
   schedule:
     - cron: '30 12 * * *'
 permissions:
-  contents: read
+  contents: write
   actions: read
+concurrency:
+  group: nfl-frozen-evaluation-archive
+  cancel-in-progress: false
 jobs:
   compare:
     runs-on: ubuntu-latest
@@ -22,7 +25,21 @@ jobs:
         run: pip install pandas numpy
       - name: Run comparison tests
         run: python -m unittest research.test_compare_frozen_market research.test_collect_cohort_scores -v
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          path: archive_repo
+      - name: Restore permanent original market snapshot
+        id: restore
+        run: |
+          if [ -d archive_repo/research_archive/2026-11-19/original_market ]; then
+            cp -a archive_repo/research_archive/2026-11-19/original_market original_pregame_market
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Download original pregame odds snapshot
+        if: steps.restore.outputs.found != 'true'
         uses: actions/download-artifact@v4
         with:
           name: nfl-research-moneylines-44789837947
@@ -63,3 +80,20 @@ jobs:
           name: nfl-model-vs-market-${{ github.run_id }}
           path: research_outputs/paired_evaluation/
           retention-days: 90
+      - name: Preserve verified research history
+        run: |
+          set -eu
+          base=archive_repo/research_archive/2026-11-19
+          mkdir -p "$base/original_market" "$base/evaluations/${{ github.run_id }}"
+          cp -n original_pregame_market/moneyline_snapshot_*.csv original_pregame_market/moneyline_manifest_*.json "$base/original_market/"
+          cp -n research/frozen_cohorts/2026-11-19-v3-15-games.csv "$base/"
+          cp -n research_outputs/paired_evaluation/* "$base/evaluations/${{ github.run_id }}/"
+          cd archive_repo
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add research_archive/2026-11-19
+          if ! git diff --cached --quiet; then
+            git commit -m "Archive frozen NFL research evaluation ${{ github.run_id }}"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
