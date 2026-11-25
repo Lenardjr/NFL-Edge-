@@ -1,0 +1,11 @@
+{
+  "cohort_games": 15,
+  "completed_scored_games": 13,
+  "paired_games_with_fresh_pregame_market": 12,
+  "model_brier_on_paired": 0.19533884577847824,
+  "market_brier_on_paired": 0.1955709978284883,
+  "model_minus_market_brier": -0.00023215205001006026,
+  "market_outperformance_verified": false,
+  "profitability_verified": false,
+  "note": "A small sample or lower Brier score alone does not establish a durable edge. Market source is historical pregame snapshots."
+}
