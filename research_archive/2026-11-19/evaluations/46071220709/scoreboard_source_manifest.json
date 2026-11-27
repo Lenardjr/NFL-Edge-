@@ -1,0 +1,57 @@
+{
+  "retrieved_at_utc": "2026-11-27T21:35:03.543754+00:00",
+  "cohort_sha256": "f836e4e17f7a0b5062e757e0faf7d346f748bfce6f878aaca88e5966bf93af41",
+  "source": "ESPN public scoreboard API",
+  "source_queries": [
+    {
+      "date": "20261119",
+      "url": "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=20261119&limit=100",
+      "sha256": "70cb027c59556cf3e0e02d35fff93f0ce568783504a85831b8adaa34e1c8ddc2"
+    },
+    {
+      "date": "20261120",
+      "url": "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=20261120&limit=100",
+      "sha256": "50b9c3dd9a55bf543ce5d94f0c58250eaefe529e3de9280c6664ad88d1768e05"
+    },
+    {
+      "date": "20261121",
+      "url": "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=20261121&limit=100",
+      "sha256": "50b9c3dd9a55bf543ce5d94f0c58250eaefe529e3de9280c6664ad88d1768e05"
+    },
+    {
+      "date": "20261122",
+      "url": "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=20261122&limit=100",
+      "sha256": "ccde8a4c57f64fa46e5b734b8fd033ffd8ccfe7b509385e346079e99549ec618"
+    },
+    {
+      "date": "20261123",
+      "url": "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=20261123&limit=100",
+      "sha256": "d91761e7479566be999490262398cf4a62a5b7e175d3bf3ca10e3453a65e589d"
+    },
+    {
+      "date": "20261124",
+      "url": "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=20261124&limit=100",
+      "sha256": "50b9c3dd9a55bf543ce5d94f0c58250eaefe529e3de9280c6664ad88d1768e05"
+    },
+    {
+      "date": "20261125",
+      "url": "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=20261125&limit=100",
+      "sha256": "8c5f061d748a10c3f1867a9c185408db12fa98959da5d785b649bf4499ccd695"
+    },
+    {
+      "date": "20261126",
+      "url": "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=20261126&limit=100",
+      "sha256": "7d33ae912f226e02bb4be36d9fae29455ab55ffe4f44488deceb0a7b4ca649b0"
+    },
+    {
+      "date": "20261127",
+      "url": "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=20261127&limit=100",
+      "sha256": "1784c6031a609f7beedaeb6529b8aaec759b0a5f4cfd67b8e0bcb4041ce2570d"
+    }
+  ],
+  "completed_games": 15,
+  "games_in_cohort": 15,
+  "league_independently_verified": false,
+  "market_prices_verified": false,
+  "note": "Only ESPN completed events with matching teams and kickoff are scored; provider snapshots are not a sportsbook market."
+}
